@@ -32,13 +32,22 @@ Example requests:
 
 The orchestrated path first asks whether to use SDD, TDD, and OpenSpec for the task at all. This keeps doc-only edits, one-off verification requests, and tool runs out of the heavier workflow when that would just waste time.
 
+Interactive questions in that path should:
+
+- use the contributor's preferred communication language
+- render as numbered plain-text choices that display cleanly in IDE and CLI interfaces
+- include examples only when a choice is abstract enough to need clarification
+
 Typical preflight options should look like this:
 
-- `Recommended: Use the full SDD/TDD/OpenSpec path` Example: `A feature or behavior change that should become a formal change`
-- `Alternative: Use a lighter path for this task` Example: `A docs edit, a command run, or a small tooling task`
-- `Alternative: Clarify first, then decide` Example: `Ask one short scope question before choosing the path`
+1. `Recommended: Use the full SDD/TDD/OpenSpec path`
+   Example: `A feature or behavior change that should become a formal change`
+2. `Alternative: Use a lighter path for this task`
+   Example: `A docs edit, a command run, or a small tooling task`
+3. `Alternative: Clarify first, then decide`
+   Example: `Ask one short scope question before choosing the path`
 
-If the user chooses the heavier path, the orchestrated flow keeps OpenSpec as the source of truth, uses `brainstorming` only when the request still needs shaping, and pauses before `propose`, `apply`, `verify`, and `archive`.
+If the user chooses the heavier path, the orchestrated flow keeps OpenSpec as the source of truth, uses `brainstorming` only when the request still needs shaping, commits the OpenSpec artifacts before implementation, pauses before `propose`, `apply`, and `archive`, and moves into `verify` automatically after SDD/TDD-backed implementation is complete.
 
 ## When To Start With Brainstorming
 
@@ -108,7 +117,7 @@ You do not need to manually remember to trigger the worktree skill in normal use
 
 The intended behavior is:
 
-- if the OpenSpec change files are still uncommitted, implementation stays in the current workspace or commits first
+- OpenSpec change artifacts are committed before implementation
 - if the OpenSpec change files are committed and isolation is useful, the agent should recommend the worktree option and let the user decide whether to use it
 
 In short:
@@ -119,23 +128,18 @@ In short:
 
 The practical decision point is:
 
-- uncommitted change artifacts: stay in the current workspace for `/opsx:apply`
+- committed change artifacts and no isolation needed: stay in the current workspace for `/opsx:apply`
 - committed change artifacts and you want isolation: create a worktree, then run `/opsx:apply` there
 
 When this branch point appears in the orchestrated flow, the agent should show
-a recommended option, alternatives, and a short example for each choice.
+a recommended option first, numeric choices, and short examples only for options that need clarification.
 
 Typical examples:
 
-- `Recommended: Open a worktree` Example: `Create .worktrees/add-startup-check before apply`
-- `Alternative: Stay in the current workspace` Example: `Continue apply on the current branch`
-- `Alternative: Commit artifacts first, then open a worktree` Example: `Commit openspec/changes/<change>/ and branch from there`
+1. `Recommended: Open a worktree`
+2. `Alternative: Stay in the current workspace`
 
-If the workflow needs a commit decision, the agent should also ask:
-
-- whether to commit now
-- which commit message language to use
-- which commit style to use after checking recent commit history
+The workflow should not ask whether to commit OpenSpec artifacts first. It should commit them before implementation and only ask about commit language or style when the project does not already define them.
 
 If you explicitly want isolation, you can still say so:
 
@@ -157,8 +161,7 @@ you changed before claiming completion. For this repository, that means using th
 real checks that cover the files you touched instead of relying on OpenSpec
 validation alone.
 
-If you entered through the single-entry path, expect a decision prompt before
-moving into `verify`.
+If implementation followed the approved SDD/TDD path, the single-entry flow should move into `verify` automatically instead of pausing for another confirmation.
 
 ## Archive
 
@@ -171,7 +174,8 @@ For non-interactive CLI use, you can also run:
 - `openspec archive <change-name> -y`
 
 If you entered through the single-entry path, expect a decision prompt before
-moving into `archive`.
+moving into `archive`. After archive is approved, work that was completed in a
+worktree should be merged back into the main workspace before cleanup.
 
 ## Typical End-To-End Example
 

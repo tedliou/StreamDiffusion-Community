@@ -20,12 +20,15 @@ replacement workflow.
 - Ask whether to use SDD, TDD, and OpenSpec before entering the heavier workflow path.
 - Route through the repository's required workflow stages.
 - Keep SDD, TDD, workspace decisions, and verification in place.
-- Pause before `propose`, `apply`, `verify`, and `archive`.
-- Also pause when the workflow needs a decision about worktrees or commits.
+- Pause before `propose`, `apply`, and `archive`.
+- Also pause when the workflow needs a decision about worktrees.
+- Ask questions in the user's preferred communication language.
+- Format every decision prompt as a plain-text numbered list that displays cleanly in IDE and CLI UIs.
 - Every decision prompt must include:
-  - one recommended option
+  - one recommended option listed first
   - one or two alternatives
-  - a short example for each option
+  - numeric labels so the user can reply with `1`, `2`, or `3`
+- Add examples only when an option is abstract enough that the choice would otherwise be unclear.
 - Allow the user to override with a short free-form reply.
 
 ## Direct OpenSpec Commands Still Win
@@ -56,9 +59,12 @@ Use this when the request might be:
 
 Example prompt:
 
-- `Recommended: Use the full SDD/TDD/OpenSpec path` Example: `Behavior changes, new features, or workflow-affecting work`
-- `Alternative: Use a lighter path for this task` Example: `Edit docs, run a verification command, or use a tool without opening a formal change`
-- `Alternative: Decide after a short clarification pass` Example: `Clarify scope first, then choose the heavier or lighter path`
+1. `Recommended: Use the full SDD/TDD/OpenSpec path`
+   Example: `Behavior changes, new features, or workflow-affecting work`
+2. `Alternative: Use a lighter path for this task`
+   Example: `Edit docs, run a verification command, or use a tool without opening a formal change`
+3. `Alternative: Decide after a short clarification pass`
+   Example: `Clarify scope first, then choose the heavier or lighter path`
 
 If the user chooses the lighter path, do not force the request into OpenSpec.
 
@@ -75,16 +81,15 @@ Pause before:
 
 - `propose`
 - `apply`
-- `verify`
 - `archive`
 
 Each prompt should use this shape:
 
-- `Recommended:` <option> Example: `<short example>`
-- `Alternative:` <option> Example: `<short example>`
-- `Alternative:` <option> Example: `<short example>`
+1. `Recommended:` <option>
+2. `Alternative:` <option>
+3. `Alternative:` <option>
 
-Keep the options mutually exclusive and easy to scan.
+Keep the options mutually exclusive and easy to scan. Add an example only when it materially clarifies an otherwise fuzzy option.
 
 ## Conditional Branch Prompts
 
@@ -99,38 +104,28 @@ git status --short openspec/changes
 ```
 
 - If the relevant change artifacts are uncommitted, stay in the current
-  workspace or ask whether to commit first.
+  workspace only until they are committed for the heavier path.
 - If the relevant change artifacts are committed and isolation is useful, ask
   whether to stay in the current workspace or open a worktree.
 
 Example prompt:
 
-- `Recommended: Open a worktree` Example: `Create .worktrees/add-startup-check before apply`
-- `Alternative: Stay in the current workspace` Example: `Continue apply on the current branch`
-- `Alternative: Commit artifacts first, then open a worktree` Example: `Commit openspec/changes/<change>/ and branch from there`
+1. `Recommended: Open a worktree`
+2. `Alternative: Stay in the current workspace`
 
 ### Commit timing
 
-When a commit is needed or strongly recommended, ask before creating it.
+When OpenSpec artifacts are created for the heavier path, commit them before implementation. Do not ask whether to commit first.
 
-Example prompt:
+### Commit message language and style
 
-- `Recommended: Commit now` Example: `Commit the OpenSpec artifacts before apply`
-- `Alternative: Continue without a commit` Example: `Keep proposal and tasks uncommitted in the current workspace`
-- `Alternative: Commit only the workflow artifacts` Example: `Commit openspec/changes/<change>/ and nothing else`
+Check repository guidance before asking:
 
-### Commit message language
+- If project instructions already specify commit language or style, follow them automatically and do not ask.
+- If project instructions are silent, inspect recent commit history before inferring the dominant pattern.
+- Ask only when the repository lacks a clear convention or the user explicitly wants to override it.
 
-Ask separately from style.
-
-Example prompt:
-
-- `Recommended: English` Example: `feat: add startup validation`
-- `Alternative: Traditional Chinese` Example: `feat: 新增啟動前檢查`
-
-### Commit style
-
-Inspect recent commit history before recommending a style:
+Inspect recent commit history before recommending a style when needed:
 
 ```bash
 git log --oneline --max-count=12
@@ -138,11 +133,7 @@ git log --oneline --max-count=12
 
 Infer the dominant pattern and present it as a recommendation, not a rule.
 
-Example prompt:
-
-- `Recommended: Reuse the recent commit style` Example: `feat: add startup validation`
-- `Alternative: Conventional Commits` Example: `chore(openspec): add apply-ready artifacts`
-- `Alternative: Short natural sentence` Example: `add startup validation flow`
+Only ask for commit language or style when no project convention exists. If you do ask, keep language and style in separate numbered prompts and add examples only when the labels are too vague on their own.
 
 ## Apply Expectations
 
@@ -155,7 +146,7 @@ Once the user chooses to continue into implementation:
 
 ## Verify Expectations
 
-Before `verify`, ask the stage-gate question.
+Do not pause before `verify` when implementation followed the approved SDD/TDD path. Move into verification automatically after implementation work is complete and the prior development checks have passed.
 
 Then run:
 
@@ -169,9 +160,7 @@ OpenSpec validation does not replace code tests or builds.
 
 Before `archive`, ask the stage-gate question.
 
-If the work happened in a worktree, make sure the user has chosen the commit
-message language and style before creating the commit that carries the finished
-change.
+If the work happened in a worktree and the user approves `archive`, merge the finished work back to the main workspace as part of the archive flow.
 
 ## Smoke Flow References
 
@@ -183,10 +172,10 @@ The orchestrated workflow should support both of these repository-tested paths:
 2. Ask whether to use SDD, TDD, and OpenSpec
 3. Pause before `propose`
 4. Create OpenSpec artifacts
-5. Keep uncommitted artifacts in the current workspace
+5. Commit OpenSpec artifacts in the current workspace
 6. Pause before `apply`
 7. Implement with TDD in the current workspace
-8. Pause before `verify`
+8. Automatically run `verify` after implementation when SDD/TDD expectations are satisfied
 9. Verify code and OpenSpec
 10. Pause before `archive`
 11. Archive the change
@@ -197,14 +186,14 @@ The orchestrated workflow should support both of these repository-tested paths:
 2. Ask whether to use SDD, TDD, and OpenSpec
 3. Pause before `propose`
 4. Create OpenSpec artifacts
-5. Ask whether to commit
-6. Ask for commit message language
-7. Detect recent commit history and recommend a commit style
-8. Commit the artifacts
-9. Pause before `apply`
-10. Ask whether to open a worktree
-11. Implement with TDD in the worktree
-12. Pause before `verify`
-13. Verify code and OpenSpec
-14. Pause before `archive`
-15. Archive the change
+5. Commit OpenSpec artifacts
+6. Reuse project commit language and style automatically when guidance exists
+7. Detect recent commit history and ask only if the repository still lacks a clear commit convention
+8. Pause before `apply`
+9. Ask whether to open a worktree
+10. Implement with TDD in the worktree
+11. Automatically run `verify` after implementation when SDD/TDD expectations are satisfied
+12. Verify code and OpenSpec
+13. Pause before `archive`
+14. Archive the change
+15. Merge the finished worktree branch back to the main workspace

@@ -15,16 +15,21 @@ OpenSpec owns the workflow. Repository-local skills may clarify, verify, or impr
 
 1. If the user wants a single natural-language request to drive the full workflow, use `openspec-autopilot` first.
 2. In the autopilot path, ask whether to use SDD, TDD, and OpenSpec before entering the heavier workflow path.
-3. If the request is still fuzzy and you are not already inside the autopilot path, use `brainstorming` first to clarify goals, constraints, trade-offs, and boundaries.
-4. Once the idea is clear enough, continue with `/opsx:propose`.
-5. Treat `openspec/changes/<change>/proposal.md`, `design.md`, spec deltas, and `tasks.md` as the only source of truth.
-6. Before implementation, inspect whether the OpenSpec change artifacts are already committed on the current branch.
-7. If the change artifacts are uncommitted, either commit them before creating a worktree or stay in the current workspace for `/opsx:apply`.
-8. If the change artifacts are committed and isolation is helpful, present the workspace options and invoke `using-git-worktrees` only if the user chooses that path.
-9. Implement via `/opsx:apply` or, when execution quality needs more structure, use `subagent-driven-development` or `executing-plans` against OpenSpec `tasks.md`.
-10. Use quality skills such as `test-driven-development`, `python-change-safety`, `requesting-code-review`, and `verification-before-completion` during implementation.
-11. Before claiming completion, ensure the OpenSpec change is verified.
-12. When finished, continue with `/opsx:archive`.
+3. Ask interactive workflow questions in the user's preferred communication language and format options as numbered plain-text choices that work in IDE and CLI UIs.
+4. Only add option examples when a choice is abstract enough to need clarification.
+5. If project instructions already define commit message language or style, reuse that convention automatically instead of asking.
+6. Once OpenSpec artifacts are created for the heavier path, commit them before implementation instead of asking whether to commit.
+7. If implementation followed the approved SDD/TDD path, advance into verification automatically instead of pausing for a separate verify-stage prompt.
+8. If the work was done in a worktree and the user approves archive, merge the finished worktree branch back into the main workspace as part of completion.
+9. If the request is still fuzzy and you are not already inside the autopilot path, use `brainstorming` first to clarify goals, constraints, trade-offs, and boundaries.
+10. Once the idea is clear enough, continue with `/opsx:propose`.
+11. Treat `openspec/changes/<change>/proposal.md`, `design.md`, spec deltas, and `tasks.md` as the only source of truth.
+12. Before implementation, inspect whether the OpenSpec change artifacts are already committed on the current branch.
+13. If the change artifacts are committed and isolation is helpful, present the workspace options and invoke `using-git-worktrees` only if the user chooses that path.
+14. Implement via `/opsx:apply` or, when execution quality needs more structure, use `subagent-driven-development` or `executing-plans` against OpenSpec `tasks.md`.
+15. Use quality skills such as `test-driven-development`, `python-change-safety`, `requesting-code-review`, and `verification-before-completion` during implementation.
+16. Before claiming completion, ensure the OpenSpec change is verified.
+17. When finished, continue with `/opsx:archive`.
 
 ## Concrete Entry Points
 
