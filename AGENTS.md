@@ -49,17 +49,23 @@
 - If the same skill exists in both the repository and a global location, always use the repository copy.
 - Keep skill usage self-contained to this project. Do not depend on `C:/Users/Ted/.codex/superpowers` or any other machine-local `superpowers` checkout.
 - Use the repository-local `openspec-autopilot` skill when a single natural-language request should drive the full OpenSpec workflow with guided pause points.
+- Use the repository-local `resolving-reported-issues` skill when a user reports a bug or failure and wants the agent to carry it from clarification through verified resolution.
 
 ## OpenSpec Workflow
 
 - OpenSpec is the only source of truth for formal requirements, design, task breakdown, verification, and archive state.
 - A single natural-language request may enter the workflow through the repository-local `openspec-autopilot` orchestration path.
+- A single natural-language issue report may enter the workflow through the repository-local `resolving-reported-issues` orchestration path.
 - The orchestrated path must first ask whether to use SDD, TDD, and OpenSpec at all, so doc-only edits, one-off verification requests, and tool runs can stay on a lighter path when appropriate.
-- If a request is still fuzzy after that preflight, use `brainstorming` to shape the change before proposal work; already-clear requests may continue directly into proposal.
+- If a request is still fuzzy after that preflight, use `resolving-reported-issues` for reported bugs and unexpected behavior, or use `brainstorming` to shape feature and workflow changes before proposal work.
+- For reported bugs and unexpected behavior, establish reproduction or an evidence-backed change strategy before opening the OpenSpec proposal stage.
+- When `resolving-reported-issues` runs in autonomous mode, it must create and switch to an auto-named working branch before making OpenSpec artifacts, code changes, or commits.
+- Autonomous issue resolution must never commit directly to `main` or `master`.
 - For feature work or behavior changes, follow the OpenSpec command flow: `/opsx:propose` -> `/opsx:apply` -> `/opsx:verify` -> `/opsx:archive`.
 - When a user invokes an `/opsx:*` command directly, that OpenSpec command owns the workflow. Repository-local skills must not override it with an alternate spec or planning process.
 - Repository-local skills may help clarify requirements before proposal time or improve execution quality during implementation, but they must not create parallel spec or plan artifacts outside OpenSpec.
 - The orchestrated path must pause before major stage transitions and key workspace or commit branch points with recommended options and short examples.
+- Exception: when the user explicitly invokes `resolving-reported-issues`, the agent should auto-select the best workflow option and continue without manual stage approvals unless blocked by missing critical information or unusual safety risk.
 - When `/opsx:*` commands are unavailable in the current tool, use the documented OpenSpec CLI or repository skill fallback for the same stage instead of creating a parallel process.
 - `docs/plans/` and other ad-hoc planning locations are deprecated and must not be used as authoritative workflow artifacts.
 - Worktree handling is a workflow decision point before implementation, but the user chooses the workspace strategy after the agent explains the state:

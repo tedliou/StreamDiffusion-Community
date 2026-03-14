@@ -13,6 +13,8 @@ Load OpenSpec tasks, review critically, execute all tasks, report when complete.
 
 **Note:** Tell your human partner that Superpowers works much better with access to subagents. If subagents are available, use superpowers:subagent-driven-development instead of this skill.
 
+Autonomous caller exception: if an upstream repository skill explicitly owns workflow and workspace decisions, follow that caller's decisions without re-introducing routine confirmation prompts.
+
 ## The Process
 
 ### Step 1: Load and Review OpenSpec Change
@@ -62,11 +64,12 @@ After all tasks complete and verified:
 - Don't skip verifications
 - Reference skills when the change or task says to
 - Stop when blocked, don't guess
-- Never start implementation on main/master branch without explicit user consent
+- Never start implementation on `main` or `master`
+- If an explicit autonomous orchestrator owns workspace strategy, it must first place the work on a dedicated non-main branch before this skill proceeds
 
 ## Integration
 
 **Required workflow skills:**
 - **superpowers:openspec-workflow** - Defines the lifecycle this skill executes within
-- **superpowers:using-git-worktrees** - Optional when the user chooses an isolated workspace before starting
+- **superpowers:using-git-worktrees** - Optional when the user or an autonomous orchestrator chooses an isolated workspace before starting
 - **superpowers:finishing-a-development-branch** - Complete development after all tasks

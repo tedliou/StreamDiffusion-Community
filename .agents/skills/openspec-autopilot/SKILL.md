@@ -20,6 +20,7 @@ replacement workflow.
 - Ask whether to use SDD, TDD, and OpenSpec before entering the heavier workflow path.
 - Route through the repository's required workflow stages.
 - Keep SDD, TDD, workspace decisions, and verification in place.
+- Respect repository branch safety rules before creating change artifacts or commits.
 - Pause before `propose`, `apply`, and `archive`.
 - Also pause when the workflow needs a decision about worktrees.
 - Ask questions in the user's preferred communication language.
@@ -30,6 +31,9 @@ replacement workflow.
   - numeric labels so the user can reply with `1`, `2`, or `3`
 - Add examples only when an option is abstract enough that the choice would otherwise be unclear.
 - Allow the user to override with a short free-form reply.
+
+If a caller-specific repository skill explicitly says to run this workflow in autonomous mode, preserve the same decision logic but auto-select the best option instead of presenting routine prompts. Only stop when critical information is missing or the decision carries unusual irreversible risk.
+When such a caller also requires branch isolation, create or reuse a dedicated non-main branch before opening the heavier workflow path and keep all resulting commits off `main` and `master`.
 
 ## Direct OpenSpec Commands Still Win
 
@@ -49,6 +53,12 @@ Do not replace an explicit stage request with the single-entry flow.
 ### 2. Ask for workflow weight first
 
 Before entering the heavier process path, ask whether to use SDD, TDD, and OpenSpec.
+
+Autonomous caller exception:
+
+- if the calling skill explicitly owns workflow decisions, resolve this choice internally instead of asking
+- prefer the full SDD/TDD/OpenSpec path when the request likely needs a repository change
+- prefer a lighter path only when evidence shows a formal change is unnecessary
 
 Use this when the request might be:
 
@@ -73,7 +83,7 @@ If the user chooses the lighter path, do not force the request into OpenSpec.
 - If the request is fuzzy, use `brainstorming`.
 - If the request is already clear, prepare to enter proposal work directly.
 
-Before moving forward, present the `propose` stage gate.
+Before moving forward, present the `propose` stage gate unless an autonomous caller has already delegated that choice to this skill.
 
 ### 4. Stage-gate prompts
 
@@ -91,6 +101,10 @@ Each prompt should use this shape:
 
 Keep the options mutually exclusive and easy to scan. Add an example only when it materially clarifies an otherwise fuzzy option.
 
+Autonomous caller exception:
+
+- when invoked from a workflow that explicitly forbids routine human checkpoints, choose the recommended option automatically once the stage prerequisites are satisfied
+
 ## Conditional Branch Prompts
 
 Ask only when the branch point is actually relevant.
@@ -107,6 +121,11 @@ git status --short openspec/changes
   workspace only until they are committed for the heavier path.
 - If the relevant change artifacts are committed and isolation is useful, ask
   whether to stay in the current workspace or open a worktree.
+
+Autonomous caller exception:
+
+- if the caller owns workspace decisions, choose in-place for uncommitted or low-risk work
+- choose a worktree only when artifacts are committed and isolation materially reduces implementation risk
 
 Example prompt:
 
@@ -144,6 +163,8 @@ Once the user chooses to continue into implementation:
 - `using-git-worktrees` is used when the user chooses the worktree path.
 - `verification-before-completion` applies before any success claim.
 
+If an autonomous caller already chose the implementation path, treat that as the required continuation signal.
+
 ## Verify Expectations
 
 Do not pause before `verify` when implementation followed the approved SDD/TDD path. Move into verification automatically after implementation work is complete and the prior development checks have passed.
@@ -159,6 +180,10 @@ OpenSpec validation does not replace code tests or builds.
 ## Archive Expectations
 
 Before `archive`, ask the stage-gate question.
+
+Autonomous caller exception:
+
+- if the caller owns stage transitions, proceed into archive automatically after successful verification and completion checks
 
 If the work happened in a worktree and the user approves `archive`, merge the finished work back to the main workspace as part of the archive flow.
 

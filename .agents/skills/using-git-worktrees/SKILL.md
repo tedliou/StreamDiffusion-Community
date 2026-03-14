@@ -15,6 +15,8 @@ Git worktrees create isolated workspaces sharing the same repository, allowing w
 
 For OpenSpec changes, this skill is opt-in: inspect the change state first, then invoke it only after the user chooses the worktree path.
 
+Autonomous caller exception: if an upstream repository skill explicitly owns the workspace decision, it may invoke this skill after selecting the worktree path itself. Do not re-ask the user for routine confirmation in that case.
+
 ## OpenSpec Preflight
 
 If this worktree will be used for an OpenSpec change, verify whether the change artifacts are committed on the current branch before creating the worktree.
@@ -61,6 +63,12 @@ No worktree directory found. Where should I create worktrees?
 
 Which would you prefer?
 ```
+
+Autonomous caller exception:
+
+- prefer `.worktrees/` for project-local isolation when it exists or can be created safely
+- otherwise use `~/.config/superpowers/worktrees/<project-name>/` when a project-local choice would require an avoidable prompt
+- only ask when neither location can be used safely under repository rules
 
 ## Safety Verification
 
@@ -144,6 +152,10 @@ go test ./...
 ```
 
 **If tests fail:** Report failures, ask whether to proceed or investigate.
+
+Autonomous caller exception:
+
+- if the calling workflow explicitly owns execution decisions, report the failing baseline to that workflow and let it choose whether to continue in-place, investigate, or abandon the worktree path without asking the user immediately
 
 **If tests pass:** Report ready.
 

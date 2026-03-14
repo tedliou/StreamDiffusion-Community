@@ -13,6 +13,8 @@ Guide completion of development work by presenting clear options and handling ch
 
 **Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
 
+Autonomous caller exception: if an upstream repository skill explicitly owns completion decisions, preserve the same safety checks but allow that caller to choose the completion option without interactive prompting.
+
 ## The Process
 
 ### Step 1: Verify Tests
@@ -46,6 +48,11 @@ git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null
 
 Or ask: "This branch split from main - is that correct?"
 
+Autonomous caller exception:
+
+- infer the base branch from repository state when possible
+- only ask when the base cannot be determined safely
+
 ### Step 3: Present Options
 
 Present exactly these 4 options:
@@ -62,6 +69,12 @@ Which option?
 ```
 
 **Don't add explanation** - keep options concise.
+
+Autonomous caller exception:
+
+- if the caller already owns completion decisions, choose the safest repository-appropriate option automatically instead of presenting the menu
+- prefer keeping or merging normal work; never auto-select discard
+- only ask the user when the remaining options are materially different and repository guidance cannot decide between them
 
 ### Step 4: Execute Choice
 

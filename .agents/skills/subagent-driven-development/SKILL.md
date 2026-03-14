@@ -11,6 +11,8 @@ Execute an OpenSpec change by dispatching fresh subagent per task, with two-stag
 
 **Core principle:** Fresh subagent per task + two-stage review (requirements then quality) = high quality, fast iteration
 
+Autonomous caller exception: if an upstream repository skill explicitly owns workflow and workspace decisions, keep this skill's review discipline but do not re-introduce routine user confirmation prompts that the caller already resolved.
+
 ## When to Use
 
 ```dot
@@ -235,7 +237,8 @@ Done!
 ## Red Flags
 
 **Never:**
-- Start implementation on main/master branch without explicit user consent
+- Start implementation on `main` or `master`
+- Proceed unless an explicit autonomous orchestrator has already moved the work onto a dedicated non-main branch
 - Skip reviews (requirements compliance OR code quality)
 - Proceed with unfixed issues
 - Dispatch multiple implementation subagents in parallel (conflicts)
@@ -268,7 +271,7 @@ Done!
 
 **Required workflow skills:**
 - **superpowers:openspec-workflow** - Defines the OpenSpec lifecycle this skill executes within
-- **superpowers:using-git-worktrees** - Optional when the user chooses an isolated workspace before starting
+- **superpowers:using-git-worktrees** - Optional when the user or an autonomous orchestrator chooses an isolated workspace before starting
 - **superpowers:requesting-code-review** - Code review template for reviewer subagents
 - **superpowers:finishing-a-development-branch** - Complete development after all tasks
 

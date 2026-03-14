@@ -31,6 +31,10 @@ OpenSpec owns the workflow. Repository-local skills may clarify, verify, or impr
 16. Before claiming completion, ensure the OpenSpec change is verified.
 17. When finished, continue with `/opsx:archive`.
 
+Autonomous caller exception:
+- If a repository-local orchestration skill explicitly owns workflow decisions, keep the same OpenSpec order but allow that caller to auto-select stage transitions and workspace choices without interactive prompts.
+- If that orchestrator also requires branch isolation, ensure work happens on a dedicated non-default branch before OpenSpec artifacts or implementation commits are created.
+
 ## Concrete Entry Points
 
 **Start with OpenSpec directly when the idea is already clear:**
@@ -57,6 +61,7 @@ Use whichever tool you are currently developing in. OpenSpec is the workflow, an
 - Never create a parallel implementation plan under `docs/`
 - Never treat `docs/plans` as a source of truth
 - If OpenSpec artifacts and local notes disagree, OpenSpec wins
+- Never commit OpenSpec or implementation changes directly on `main` or `master` when a repository-local autonomous orchestrator requires a dedicated working branch
 - Never move to a fresh worktree that does not contain the current OpenSpec change artifacts
 - If a retained skill tells you to write a plan or spec outside OpenSpec, that instruction is stale and must be ignored or fixed
 
@@ -64,12 +69,13 @@ Use whichever tool you are currently developing in. OpenSpec is the workflow, an
 
 **Allowed support roles:**
 - `openspec-autopilot`: route a natural-language request through the full OpenSpec workflow while preserving stage-gate decisions
+- `resolving-reported-issues`: route a reported issue through clarification, debugging, and the OpenSpec workflow, optionally in autonomous mode
 - `brainstorming`: clarify before `/opsx:propose`
 - `using-git-worktrees`: prepare a safe workspace before `/opsx:apply` when the user chooses an isolation path
 - `subagent-driven-development` / `executing-plans`: execute `tasks.md`
 - `verification-before-completion`: enforce evidence before success claims
 
-**Important:** worktree setup should still be considered during the implementation decision flow, but the user chooses whether to stay in the current workspace or invoke `using-git-worktrees`.
+**Important:** worktree setup should still be considered during the implementation decision flow. By default the user chooses whether to stay in the current workspace or invoke `using-git-worktrees`, but an explicit autonomous orchestrator may make that choice using repository guidance.
 
 **Forbidden roles:**
 - Replacing `/opsx:propose`
