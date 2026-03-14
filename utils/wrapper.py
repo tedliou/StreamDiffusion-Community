@@ -10,6 +10,7 @@ from diffusers import AutoencoderTiny, StableDiffusionPipeline
 from PIL import Image
 
 from streamdiffusion import StreamDiffusion
+from streamdiffusion.compat import resolve_clip_image_processor_class
 from streamdiffusion.image_utils import postprocess_image
 
 
@@ -647,15 +648,16 @@ class StreamDiffusionWrapper:
         )
 
         if self.use_safety_checker:
-            from transformers import CLIPFeatureExtractor
+            import transformers
             from diffusers.pipelines.stable_diffusion.safety_checker import (
                 StableDiffusionSafetyChecker,
             )
 
+            clip_image_processor_class = resolve_clip_image_processor_class(transformers)
             self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(
                 "CompVis/stable-diffusion-safety-checker"
             ).to(pipe.device)
-            self.feature_extractor = CLIPFeatureExtractor.from_pretrained(
+            self.feature_extractor = clip_image_processor_class.from_pretrained(
                 "openai/clip-vit-base-patch32"
             )
             self.nsfw_fallback_img = Image.new("RGB", (512, 512), (0, 0, 0))

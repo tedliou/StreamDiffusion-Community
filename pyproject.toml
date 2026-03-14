@@ -19,7 +19,7 @@ keywords = [
     "real-time",
 ]
 dependencies = [
-    "diffusers==0.24.0",
+    "diffusers==0.37.0",
     "fire",
     "numpy",
     "omegaconf",
@@ -36,18 +36,18 @@ xformers = ["xformers"]
 tensorrt = [
     "colored",
     "cuda-python",
-    "onnx==1.15.0",
-    "onnxruntime==1.16.3",
-    "protobuf==3.20.2",
+    "onnx==1.20.1",
+    "onnxruntime==1.24.3",
+    "protobuf==7.34.0",
     "pywin32; sys_platform == 'win32'",
 ]
 dev = [
     "accelerate",
     "colored",
     "cuda-python",
-    "onnx==1.15.0",
-    "onnxruntime==1.16.3",
-    "protobuf==3.20.2",
+    "onnx==1.20.1",
+    "onnxruntime==1.24.3",
+    "protobuf==7.34.0",
     "pywin32; sys_platform == 'win32'",
     "ruff",
     "torch",

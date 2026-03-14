@@ -1,10 +1,13 @@
 from typing import *
 
 import torch
-from diffusers.models.autoencoder_tiny import AutoencoderTinyOutput
-from diffusers.models.unet_2d_condition import UNet2DConditionOutput
-from diffusers.models.vae import DecoderOutput
 from polygraphy import cuda
+
+from streamdiffusion.diffusers_compat import (
+    AutoencoderTinyOutput,
+    DecoderOutput,
+    UNet2DConditionOutput,
+)
 
 from .utilities import Engine
 
