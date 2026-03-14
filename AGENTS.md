@@ -10,25 +10,23 @@
 ## Project Shape
 
 - `src/streamdiffusion/`: core Python package and acceleration-related runtime code.
-- `examples/`: minimal runnable examples for library usage and performance experiments.
-- `demo/`: higher-level realtime demos, including backend services and web frontends.
 - `models/`: local model weight placeholders and runtime assets.
 - `utils/`: small helper utilities outside the main package.
-- `assets/`, `images/`: documentation/demo media and sample inputs.
+- `assets/`, `images/`: documentation media and sample inputs retained for the core repository.
+- `openspec/`: the authoritative workflow state for formal change planning and execution.
 
 ## Tech Stack
 
 - Primary runtime: Python 3.10+
+- Environment and dependency management: `uv`
 - ML stack: PyTorch, Diffusers, Transformers, Accelerate, xFormers
 - Performance path: CUDA, TensorRT, ONNX/ONNX Runtime, stable-fast
-- Service/demo layer: FastAPI, Uvicorn
-- Frontends: Vite-based apps with React/TypeScript and SvelteKit/TypeScript
 
 ## Special Notes
 
 - This repository is expected to undergo major refactoring. Favor broadly applicable guidance over assumptions tied to the current layout.
 - Multiple AI agents may contribute here. Keep changes small, explicit, and easy to review; avoid hidden coupling and surprising conventions.
-- Preserve clear boundaries between core library code, demo applications, and frontend code.
+- Preserve clear boundaries between the core library, repository tooling, and any future reintroduced demos or frontends.
 - Prefer portable, reproducible Linux workflows, especially for GPU, CUDA, and TensorRT related changes.
 - When documenting commands or setup steps, default to Ubuntu/WSL2-compatible instructions.
 

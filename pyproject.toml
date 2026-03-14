@@ -1,3 +1,75 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "streamdiffusion"
+version = "0.1.1"
+description = "Core source repository for the StreamDiffusion Python package"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache 2.0 License" }
+authors = [{ name = "StreamDiffusion contributors", email = "cumulokyoukai@gmail.com" }]
+keywords = [
+    "deep-learning",
+    "diffusion",
+    "pytorch",
+    "stable-diffusion",
+    "streamdiffusion",
+    "real-time",
+]
+dependencies = [
+    "diffusers==0.24.0",
+    "fire",
+    "numpy",
+    "omegaconf",
+    "packaging",
+    "pillow",
+    "transformers",
+]
+
+[project.optional-dependencies]
+# These extras stay opt-in during the uv migration. `torch` and `xformers`
+# still need to return to the main workflow in a later refactor.
+torch = ["accelerate", "torch", "torchvision"]
+xformers = ["xformers"]
+tensorrt = [
+    "colored",
+    "cuda-python",
+    "onnx==1.15.0",
+    "onnxruntime==1.16.3",
+    "protobuf==3.20.2",
+    "pywin32; sys_platform == 'win32'",
+]
+dev = [
+    "accelerate",
+    "colored",
+    "cuda-python",
+    "onnx==1.15.0",
+    "onnxruntime==1.16.3",
+    "protobuf==3.20.2",
+    "pywin32; sys_platform == 'win32'",
+    "ruff",
+    "torch",
+    "torchvision",
+    "xformers",
+]
+
+[project.urls]
+Homepage = "https://github.com/cumulo-autumn/StreamDiffusion"
+Repository = "https://github.com/cumulo-autumn/StreamDiffusion"
+Issues = "https://github.com/cumulo-autumn/StreamDiffusion/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+streamdiffusion = ["py.typed"]
+
 [tool.ruff]
 # Never enforce `E501` (line length violations).
 ignore = ["C901", "E501", "E741", "F402", "F403", "F405", "F823"]
