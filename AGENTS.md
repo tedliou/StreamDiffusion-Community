@@ -30,6 +30,17 @@
 - Prefer portable, reproducible Linux workflows, especially for GPU, CUDA, and TensorRT related changes.
 - When documenting commands or setup steps, default to Ubuntu/WSL2-compatible instructions.
 
+## Commit Messages
+
+- Follow the recent repository commit style for manual commits.
+- Write commit subjects in English.
+- Prefer Conventional Commit prefixes such as `feat:`, `fix:`, `refactor:`, and `chore:`.
+- Add a scope when it materially clarifies the area being changed, for example `chore(openspec): ...`.
+- Keep the subject to a single concise line and use an imperative verb phrase such as `adopt`, `archive`, `ignore`, or `propose`.
+- Prefer lowercase subjects after the prefix unless a proper noun or acronym requires capitalization.
+- Avoid vague commit subjects such as `update`, `try again`, or `customize` when a more specific action can be named.
+- For merge commits, keep the platform-generated message unless the workflow explicitly requires otherwise.
+
 ## Skills
 
 - Repository-local skills live in `./.agents/skills/`.
