@@ -35,6 +35,8 @@ where uv >nul 2>nul && goto :sync
 set "UV=%ROOT%cache\bin\uv.exe"
 if exist "%UV%" goto :sync
 echo [StreamTurbo] Installing uv %UV_VERSION% into cache\bin ...
+rem A PSModulePath inherited from PowerShell 7 breaks Windows PowerShell 5.1.
+set "PSModulePath="
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:UV_INSTALL_DIR='%ROOT%cache\bin'; $env:UV_NO_MODIFY_PATH='1'; irm https://astral.sh/uv/%UV_VERSION%/install.ps1 | iex"
 if not exist "%UV%" (
     echo [StreamTurbo] Could not install uv. Check the network connection and try again.
