@@ -1,5 +1,6 @@
 @echo off
-rem StreamTurbo launcher (ADR-0006): driver check, uv bootstrap, frozen sync, doctor.
+rem StreamTurbo launcher (ADR-0006): driver check, uv bootstrap, frozen sync, doctor, run.
+rem Arguments are passed to `streamturbo run`, for example: start.cmd --settings my.toml
 rem Everything it downloads stays inside this folder, so deleting the folder uninstalls it.
 setlocal EnableExtensions
 cd /d "%~dp0"
@@ -58,8 +59,11 @@ rem --- 4. Doctor ----------------------------------------------------------
 "%UV%" run --no-sync streamturbo doctor
 if errorlevel 1 goto :fail
 
+rem --- 5. Run (downloads the model at its pinned revision on first use) ---
+"%UV%" run --no-sync streamturbo run %*
+if errorlevel 1 goto :fail
+
 endlocal
-pause
 exit /b 0
 
 :fail
