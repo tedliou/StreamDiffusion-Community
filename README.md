@@ -1,65 +1,74 @@
-# StreamDiffusion
+# StreamTurbo
 
-[English](./README.md) | [日本語](./README-ja.md) | [한국어](./README-ko.md)
+> **English summary.** StreamTurbo is a Windows-only, real-time image-to-image Runtime for TouchDesigner. It receives video over NDI or Spout, regenerates every frame with a single sd-turbo step on an NVIDIA GPU, and sends the result back over NDI or Spout. Clone the repository and double-click `start.cmd`. It is a non-commercial, independent rewrite of [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion) and is under construction: see the [spec](https://github.com/tedliou/StreamTurbo/issues/2) for the roadmap.
 
-## Overview
+StreamTurbo 是給 TouchDesigner 使用的即時影像生成 Runtime，只支援 Windows。它從 NDI 或 Spout 接收影像，在 NVIDIA 顯示卡上用 sd-turbo 單步重新生成每一格，再經由 NDI 或 Spout 送回去。
 
-This repository is currently maintained as the core source workspace for the StreamDiffusion Python package.
+> [!NOTE]
+> 開發中。目前完成的是 M0：專案骨架、啟動器和 `doctor`。生成功能從 M1 開始，進度請見 [spec #2](https://github.com/tedliou/StreamTurbo/issues/2)。
 
-The previous `demo/`, `examples/`, and package release automation have been removed for now so the project can stabilize around a single `uv`-managed development environment. Future refactors are expected to bring back heavier runtime pieces and broader distribution workflows in a cleaner shape.
+## 需求
 
-## Current Scope
+| 項目 | 需求 |
+|---|---|
+| 作業系統 | Windows 10 / 11 x64 |
+| 顯示卡 | NVIDIA RTX 20 系列（Turing）以上，VRAM 8 GB 以上 |
+| 驅動程式 | 580 以上 |
+| 其他 | git |
 
-- Core Python package source under `src/streamdiffusion/`
-- Root-level Docker workflow for the core workspace
-- OpenSpec-driven collaboration and repository maintenance files
+不需要另外安裝 Python、CUDA Toolkit、Visual Studio、NDI Tools 或 Node.js。
 
-Not included in this phase:
+## 安裝與啟動
 
-- Bundled demos or examples
-- PyPI/TestPyPI publishing
-- A default environment that installs GPU-heavy runtime dependencies
-
-## Requirements
-
-- Linux or WSL2 with Ubuntu-compatible tooling
-- Python 3.10+
-- `uv`
-
-If `uv` is not installed yet, Astral's installer works well on Ubuntu/WSL2:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+```bat
+git clone https://github.com/tedliou/StreamTurbo.git
+cd StreamTurbo
+start.cmd
 ```
 
-## Setup
+`start.cmd` 依序做這些事：
 
-```bash
-git clone https://github.com/cumulo-autumn/StreamDiffusion.git
-cd StreamDiffusion
+1. 檢查 NVIDIA 驅動程式版本，太舊就停下並提供更新連結。
+2. 找不到 uv 時，把 uv 安裝到 `cache\bin`。
+3. 依照 lockfile 同步 Python 3.12 和所有套件（含 CUDA runtime）。第一次執行會下載數 GB。
+4. 執行 `streamturbo doctor` 檢查環境。
+
+所有下載都放在專案資料夾內（`cache\`、`models\`、`.venv\`），刪除資料夾即可完整移除。
+
+## `streamturbo doctor`
+
+回報顯示卡名稱、算力、VRAM、驅動程式版本、目前與預設的功率上限、torch 與 CUDA 版本，以及 NDI 和 Spout 是否可用。環境有問題時結束代碼為 1。
+
+```bat
+.venv\Scripts\streamturbo doctor
+```
+
+## TouchDesigner 連接
+
+M1 完成後補上。
+
+## 疑難排解
+
+| 狀況 | 處理方式 |
+|---|---|
+| 顯示找不到 NVIDIA 驅動程式 | 從 [NVIDIA 官網](https://www.nvidia.com/Download/index.aspx) 安裝 580 以上的驅動程式 |
+| uv 安裝失敗 | 確認網路連線，或手動安裝 [uv](https://docs.astral.sh/uv/) 後重新執行 |
+| `doctor` 顯示 NOT READY | 依照 PROBLEM 那幾行的說明處理 |
+
+## 開發
+
+```bat
 uv sync
-uv run python -c "import streamdiffusion; print('streamdiffusion import OK')"
+uv run ruff check
+uv run ruff format --check
+uv run pyright
+uv run pytest -m "not gpu"
 ```
 
-The baseline verification target for this repository is that `uv sync` completes and the package can be imported. This change intentionally does not promise a full inference-ready environment.
+設計文件：[GLOSSARY.md](GLOSSARY.md)、[docs/adr/](docs/adr/)。
 
-## Dependency Notes
+## 授權
 
-- `torch` and `xformers` are not part of the default `uv sync` environment in this stabilization pass.
-- Both packages remain required project dependencies for later refactors and must be added back to the main workflow.
-- Optional extras remain defined in `pyproject.toml` for follow-up work, but they are not part of the baseline verification target here.
-
-## Docker
-
-The root Dockerfile follows the same lightweight setup path:
-
-```bash
-docker build -t streamdiffusion-core .
-docker run --rm streamdiffusion-core
-```
-
-## Project Status
-
-- This repository is currently developer-focused rather than end-user-focused.
-- Release automation was intentionally removed from this phase.
-- TensorRT and other acceleration-specific tooling still exist in the codebase, but their full setup flow is deferred until the larger runtime refactor.
+- 程式碼採用 [Apache-2.0](LICENSE)，源自 StreamDiffusion，詳見 [NOTICE](NOTICE)。
+- 僅供非商業用途。sd-turbo 權重採用 Stability AI Community License。
+- NDI® 是 Vizrt NDI AB 的註冊商標，詳見 [ndi.video](https://ndi.video)。

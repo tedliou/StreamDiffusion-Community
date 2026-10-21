@@ -1,0 +1,23 @@
+StreamTurbo
+Copyright 2026 Ted Liou
+
+This product is derived from StreamDiffusion
+(https://github.com/cumulo-autumn/StreamDiffusion), copyright the
+StreamDiffusion authors, licensed under the Apache License, Version 2.0.
+StreamDiffusion is described in "StreamDiffusion: A Pipeline-level Solution
+for Real-time Interactive Generation" by Akio Kodaira, Chenfeng Xu,
+Toshiki Hazama, Takanori Yoshimoto, Kohei Ohno, Shogo Mitsuhori,
+Soichi Sugano, Hanying Cho, Zhijian Liu, Masayoshi Tomizuka and
+Kurt Keutzer (arXiv:2312.12491).
+
+The files of the original work have been modified, and in most cases
+removed and rewritten, for StreamTurbo. StreamTurbo does not track or keep
+compatibility with the upstream project.
+
+Third-party components used at run time are distributed under their own
+licences and are not covered by this notice, including:
+- NDI(R) is a registered trademark of Vizrt NDI AB. The NDI runtime is
+  shipped inside the cyndilib wheel under the NDI SDK licence;
+  see https://ndi.video
+- sd-turbo model weights by Stability AI, under the Stability AI
+  Community License.
