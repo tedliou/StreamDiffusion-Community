@@ -21,6 +21,28 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web Panel lint and build
+        working-directory: web
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+      - name: Committed Web Panel build is current
+        shell: bash
+        run: |
+          git add --intent-to-add src/streamturbo/web_panel
+          git diff --exit-code --stat -- src/streamturbo/web_panel || {
+            echo "::error::The committed Web Panel build is stale: run 'npm run build' in web/ and commit the result."
+            exit 1
+          }
+
       - name: Sync
         run: uv sync --frozen
 

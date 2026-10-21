@@ -25,3 +25,8 @@ Thumbs.db
 
 # Web Panel tooling
 node_modules/
+
+# Local state: the user's Presets and the last-used Settings
+/presets/
+/last-settings.toml
+/access-token

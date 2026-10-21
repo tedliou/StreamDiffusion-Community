@@ -19,14 +19,6 @@ class ModelSpec:
     max_side: int = 1024
     side_step: int = 64
 
-    def check_resolution(self, width: int, height: int) -> None:
-        for side in (width, height):
-            if not (self.min_side <= side <= self.max_side) or side % self.side_step:
-                raise ValueError(
-                    f"{self.name} generates at {self.min_side}-{self.max_side} px per side "
-                    f"in multiples of {self.side_step}, not {width}x{height}"
-                )
-
 
 SD_TURBO = ModelSpec(
     name="sd-turbo",

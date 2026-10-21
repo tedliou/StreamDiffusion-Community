@@ -13,13 +13,12 @@ from pathlib import Path
 import torch
 
 from streamturbo import doctor, weights
-from streamturbo.frames import PixelFormat
 from streamturbo.model_spec import SD_TURBO
 from streamturbo.paths import output_dir
 from streamturbo.runtime import Runtime
 from streamturbo.settings import Settings
 from streamturbo.testframe import synthetic_frame
-from streamturbo.transports.memory import MemorySink, MemorySource, input_frame
+from streamturbo.transports.memory import MemorySink, MemoryTransports, input_frame
 
 WARMUP_FRAMES = 20
 
@@ -34,14 +33,16 @@ def run(settings: Settings, frames: int = 120, out: Path | None = None) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     backend = PyTorchBackend(*weights.fetch_all(SD_TURBO))
     gen = settings.generation
-    source = MemorySource(repeat_fps=240)  # a fresh Input Frame is always waiting
+    net = MemoryTransports()
+    settings = settings.merged({"source": {"transport": "ndi", "name": "bench"}})
+    source = net.add_source("bench", repeat_fps=240)  # a fresh Input Frame is always waiting
     source.push(input_frame(synthetic_frame(gen.width, gen.height)))
-    sink = MemorySink(PixelFormat.UYVY if settings.sink.transport == "ndi" else PixelFormat.RGBA)
+    sink = net.sink(settings.sink)
 
     pynvml.nvmlInit()
     gpu = pynvml.nvmlDeviceGetHandleByIndex(0)
     try:
-        with Runtime(settings, backend, source, sink) as runtime:
+        with Runtime(settings, backend, net) as runtime:
             _wait_sent(runtime, WARMUP_FRAMES)
             torch.cuda.reset_peak_memory_stats()
             energy_mj, started = pynvml.nvmlDeviceGetTotalEnergyConsumption(gpu), time.perf_counter()

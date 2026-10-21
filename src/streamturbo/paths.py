@@ -18,3 +18,11 @@ def models_dir() -> Path:
 
 def output_dir() -> Path:
     return project_home() / "output"
+
+
+def presets_dir() -> Path:
+    return project_home() / "presets"
+
+
+def last_settings_path() -> Path:
+    return project_home() / "last-settings.toml"

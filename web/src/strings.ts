@@ -1,0 +1,104 @@
+// Every piece of UI text, so a translation is one file (spec #2: UI text is English, kept in one string table).
+
+export const settingText: Record<string, { label: string; help?: string; unit?: string }> = {
+  prompt: { label: "Prompt", help: "The text that steers Generation. Press Ctrl+Enter or leave the field to apply." },
+  strength: { label: "Strength", help: "0 keeps the Input Frame, 1 ignores it." },
+  seed: { label: "Seed", help: "Fixes the noise. Changing Strength never re-rolls it." },
+  "source.transport": { label: "Transport" },
+  "source.name": { label: "Name", help: "Leave empty to use the first visible sender." },
+  "sink.transport": { label: "Transport" },
+  "sink.name": { label: "Name" },
+  "sink.fps": { label: "Declared Rate", unit: "fps", help: "The frame rate announced to NDI receivers." },
+  "generation.width": { label: "Width", unit: "px" },
+  "generation.height": { label: "Height", unit: "px" },
+  "output.width": { label: "Width", unit: "px" },
+  "output.height": { label: "Height", unit: "px" },
+  fit_mode: { label: "Fit Mode", help: "How an Input Frame with another aspect ratio is mapped." },
+};
+
+export const optionText: Record<string, string> = {
+  ndi: "NDI",
+  spout: "Spout",
+  none: "None",
+  fill: "Fill",
+  fit: "Fit",
+  stretch: "Stretch",
+};
+
+export const classText = {
+  live: { label: "Live", help: "Applies on the next Output Frame without interrupting output." },
+  reset: { label: "Reset", help: "Output pauses briefly while buffers or Transports are rebuilt." },
+  rebuild: { label: "Rebuild", help: "Needs a new Engine to be built before it fully takes effect." },
+} as const;
+
+export const groupText = {
+  look: "Look",
+  source: "Source",
+  sink: "Sink",
+  resolution: "Generation Resolution",
+  output: "Output Resolution",
+  presets: "Presets",
+  previews: "Previews",
+};
+
+export const sourceStateText = {
+  none: "No Source",
+  waiting: "Waiting",
+  live: "Live",
+  lost: "Lost",
+} as const;
+
+export const text = {
+  title: "StreamTurbo",
+  skipToSettings: "Skip to Settings",
+  connection: {
+    connecting: "Connecting…",
+    open: "Connected",
+    closed: "Reconnecting…",
+  },
+  disconnectedHelp: "The Runtime is not reachable. The panel reconnects by itself when it is running again.",
+  theme: "Theme",
+  themes: { system: "System", light: "Light", dark: "Dark" },
+  metrics: {
+    source: "Source",
+    throughput: "Throughput",
+    generation: "Generation Time",
+    dropped: "Dropped",
+    vram: "VRAM",
+    power: "GPU Power",
+    backend: "Backend",
+    applying: "Applying…",
+  },
+  previews: {
+    input: "Input",
+    output: "Output",
+    pause: "Pause Previews",
+    resume: "Resume Previews",
+    empty: "No frame yet",
+  },
+  refreshSources: "Refresh",
+  refreshingSources: "Refreshing…",
+  noSources: "No senders visible",
+  randomSeed: "Random",
+  promptApply: "Apply Prompt",
+  presets: {
+    saveLabel: "New Preset Name",
+    savePlaceholder: "Evening Show…",
+    save: "Save Preset",
+    recall: "Recall",
+    rename: "Rename…",
+    renameLabel: (name: string) => `New name for ${name}`,
+    renameConfirm: "Rename",
+    cancel: "Cancel",
+    delete: "Delete",
+    confirmDelete: "Confirm Delete",
+    bundled: "Bundled",
+    empty: "No Presets yet. Save the current look to create one.",
+    help: "Presets keep the look: every Setting except Source and Sink.",
+  },
+  ndi: {
+    notice: "NDI® is a registered trademark of Vizrt NDI AB.",
+    link: "ndi.video",
+    href: "https://ndi.video",
+  },
+};

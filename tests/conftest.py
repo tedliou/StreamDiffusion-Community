@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from streamturbo.settings import Settings
+from streamturbo.transports.memory import MemoryTransports
 
 
 class FakeBackend:
@@ -50,11 +51,17 @@ class FakeBackend:
 
 @pytest.fixture
 def small_settings() -> Settings:
-    """Small sizes keep the fake Backend fast on CPU."""
+    """Small sizes keep the fake Backend fast on CPU. Source "cam" and Sink "out" are both Spout (RGBA)."""
     return Settings.model_validate(
         {
-            "source": {"transport": "none"},
+            "source": {"transport": "spout", "name": "cam"},
+            "sink": {"transport": "spout", "name": "out"},
             "generation": {"width": 256, "height": 256},
             "output": {"width": 320, "height": 240},
         }
     )
+
+
+@pytest.fixture
+def net() -> MemoryTransports:
+    return MemoryTransports()

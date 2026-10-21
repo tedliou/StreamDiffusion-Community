@@ -7,6 +7,7 @@ from collections.abc import Callable
 import torch
 
 from streamturbo.frames import InputFrame, OutputFrame, PixelFormat, host_buffer
+from streamturbo.settings import SinkSettings, SourceSettings
 
 
 def input_frame(pixels: torch.Tensor, fmt: PixelFormat = PixelFormat.RGBA) -> InputFrame:
@@ -89,3 +90,33 @@ class MemorySink:
             if found is None:
                 raise TimeoutError("no matching Output Frame was sent")
             return found
+
+
+class MemoryTransports:
+    """An in-process stand-in for NDI and Spout: Sources and Sinks are found by name.
+
+    A name nobody added yields an empty Source, like a sender that is not running yet.
+    Sinks take the pixel format of their Transport: UYVY for NDI, RGBA for Spout.
+    """
+
+    def __init__(self) -> None:
+        self.sources: dict[str, MemorySource] = {}
+        self.sinks: dict[str, MemorySink] = {}
+
+    def add_source(self, name: str, repeat_fps: float | None = None) -> MemorySource:
+        self.sources[name] = MemorySource(repeat_fps)
+        return self.sources[name]
+
+    def source(self, settings: SourceSettings) -> MemorySource | None:
+        if settings.transport == "none":
+            return None
+        return self.sources.setdefault(settings.name, MemorySource())
+
+    def sink(self, settings: SinkSettings) -> MemorySink:
+        fmt = PixelFormat.UYVY if settings.transport == "ndi" else PixelFormat.RGBA
+        if (sink := self.sinks.get(settings.name)) is None or sink.format != fmt:
+            sink = self.sinks[settings.name] = MemorySink(fmt)
+        return sink
+
+    def list_senders(self, transport: str) -> list[str]:
+        return sorted(self.sources)

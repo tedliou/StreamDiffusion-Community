@@ -1,11 +1,16 @@
-"""Pipeline runtime: receive, generate and send threads joined by latest-frame mailboxes (ADR-0003)."""
+"""Pipeline runtime: receive, generate and send threads joined by latest-frame mailboxes (ADR-0003).
+
+Settings change only through update(). The generate thread applies the latest snapshot between two Output Frames
+(ADR-0008); the receive and send threads follow the applied snapshot and reopen their Transport when it changes.
+"""
 
 import threading
 import time
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Literal
+from typing import Any, Literal
 
 import torch
 
@@ -14,8 +19,8 @@ from streamturbo.backends import Backend
 from streamturbo.frames import InputFrame, OutputFrame, PixelFormat, host_buffer
 from streamturbo.generation import GenerationCore
 from streamturbo.mailbox import Mailbox
-from streamturbo.settings import LIVE_FIELDS, Settings
-from streamturbo.transports import Sink, Source
+from streamturbo.settings import Settings
+from streamturbo.transports import Sink, Source, Transports
 
 POLL = 0.05  # seconds a thread waits before re-checking whether to stop
 IN_FLIGHT = 2  # Generations queued on the GPU at once: enough to overlap, few enough to keep frames fresh
@@ -36,6 +41,7 @@ class _Timing:
             self._start.record()
         else:
             self._began = time.perf_counter()
+            self._ms = 0.0
 
     def finish(self) -> None:
         if self._cuda:
@@ -55,6 +61,7 @@ class _Timing:
 class RuntimeStatus:
     source_state: SourceState  # none: no Source (txt2img); waiting: no frame yet; lost: frames stopped
     error: str | None  # the latest Transport or Generation error, cleared when the Source comes back
+    settings_version: int  # the Settings version Output Frames are generated with now
     frames_received: int
     frames_sent: int
     dropped_frames: int  # replaced in a mailbox before anyone read them
@@ -75,27 +82,28 @@ class Runtime:
         self,
         settings: Settings,
         backend: Backend,
-        source: Source | None,
-        sink: Sink,
+        transports: Transports,
         *,
         source_timeout: float = 1.0,
         reconnect_delay: float = 1.0,
     ) -> None:
-        self._settings = settings
+        self._settings = settings  # applied: what Output Frames are generated with
         self._settings_version = 0
         self._pending: tuple[Settings, int] | None = None  # submitted, applied between two Output Frames
         self._backend = backend
         self._core = GenerationCore(backend)
-        self._source = source
-        self._sink = sink
+        self._transports = transports
+        self._sink_format = PixelFormat.RGBA  # what the open Sink takes; frames in another format are not sent
         self._inputs: Mailbox[tuple[int, InputFrame]] = Mailbox()
         self._outputs: Mailbox[_Generated] = Mailbox()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
         self._received = self._sent = self._dropped = 0
-        self._source_state: SourceState = "waiting" if source is not None else "none"
+        self._source_state: SourceState = "waiting"
         self._error: str | None = None
+        self._last_input: InputFrame | None = None
+        self._last_output: OutputFrame | None = None
         self._generation_ms: deque[float] = deque(maxlen=METRICS_WINDOW)
         self._sent_at: deque[float] = deque(maxlen=METRICS_WINDOW)
         self._source_timeout = source_timeout
@@ -105,10 +113,7 @@ class Runtime:
         self._core.set_prompt(self._settings.prompt)
         self._core.set_seed(self._settings.seed)
         self._warm_up()
-        loops = [self._generate_loop, self._send_loop]
-        if self._source is not None:
-            loops.insert(0, self._receive_loop)
-        for loop in loops:
+        for loop in (self._receive_loop, self._generate_loop, self._send_loop):
             thread = threading.Thread(target=loop, name=f"streamturbo-{loop.__name__.strip('_')}", daemon=True)
             thread.start()
             self._threads.append(thread)
@@ -125,30 +130,43 @@ class Runtime:
             thread.join()
         self._threads.clear()
 
-    def update(self, **changes: object) -> int:
-        """Submit Live Setting changes; returns the Settings version Output Frames will carry once applied."""
-        if fixed := sorted(set(changes) - LIVE_FIELDS):
-            raise ValueError(f"{', '.join(fixed)} cannot change while running; restart the Runtime")
+    def update(self, changes: Mapping[str, Any] | None = None, /, **fields: Any) -> int:
+        """Submit a partial, possibly nested, Settings change; returns the version Output Frames will carry.
+
+        Raises ValueError (a pydantic ValidationError) and changes nothing when the result is invalid.
+        """
         with self._lock:
             current, version = self._pending or (self._settings, self._settings_version)
-            updated = Settings.model_validate({**current.model_dump(), **changes})
-            self._pending = (updated, version + 1)
+            self._pending = (current.merged({**(changes or {}), **fields}), version + 1)
             return version + 1
+
+    def settings(self) -> tuple[Settings, int]:
+        """The latest submitted Settings and their version: what every Control Surface should show."""
+        with self._lock:
+            return self._pending or (self._settings, self._settings_version)
+
+    def latest_frames(self) -> tuple[InputFrame | None, OutputFrame | None]:
+        """The last Input Frame received and the last Output Frame sent, for previews."""
+        with self._lock:
+            return self._last_input, self._last_output
 
     def _apply_pending(self) -> None:
         with self._lock:  # one step, so a concurrent update() never builds on superseded Settings
-            pending, self._pending = self._pending, None
+            previous, pending, self._pending = self._settings, self._pending, None
             if pending is not None:
                 self._settings, self._settings_version = pending
         if pending is not None:
-            self._core.set_prompt(self._settings.prompt)
-            self._core.set_seed(self._settings.seed)
+            if self._settings.prompt != previous.prompt:
+                self._core.set_prompt(self._settings.prompt)
+            if self._settings.seed != previous.seed:
+                self._core.set_seed(self._settings.seed)
 
     def status(self) -> RuntimeStatus:
         with self._lock:
             return RuntimeStatus(
                 source_state=self._source_state,
                 error=self._error,
+                settings_version=self._settings_version,
                 frames_received=self._received,
                 frames_sent=self._sent,
                 dropped_frames=self._dropped,
@@ -171,14 +189,17 @@ class Runtime:
             if state != "lost" or self._source_state == "live":
                 self._source_state = state
 
-    def _count(self, *, received: int = 0, dropped: int = 0) -> None:
+    def _record_received(self, seq: int, frame: InputFrame) -> None:
+        dropped = self._inputs.put((seq, frame))
         with self._lock:
-            self._received += received
+            self._received += 1
             self._dropped += dropped
+            self._last_input = frame
 
-    def _record_sent(self, generation_ms: float) -> None:
+    def _record_sent(self, frame: OutputFrame, generation_ms: float) -> None:
         with self._lock:
             self._sent += 1
+            self._last_output = frame
             self._generation_ms.append(generation_ms)
             self._sent_at.append(time.monotonic())
 
@@ -190,14 +211,23 @@ class Runtime:
         self.stop()
 
     def _receive_loop(self) -> None:
-        assert self._source is not None
-        source = self._source
-        seq = 0
+        seq, opened = 0, None
         while not self._stop.is_set():
+            wanted = self._settings.source
+            source: Source | None = None
             try:
+                source = self._transports.source(wanted)
+                if source is None:
+                    self._set_source_state("none")
+                    while not self._stop.is_set() and self._settings.source == wanted:
+                        self._stop.wait(POLL)
+                    continue
+                if wanted != opened:  # a new Source, not a reconnection
+                    self._set_source_state("waiting")
+                    opened = wanted
                 source.open()
                 last_frame = time.monotonic()
-                while not self._stop.is_set():
+                while not self._stop.is_set() and self._settings.source == wanted:
                     frame = source.receive(POLL)
                     now = time.monotonic()
                     if frame is None:
@@ -206,13 +236,14 @@ class Runtime:
                         continue
                     last_frame = now
                     self._set_source_state("live")
-                    self._count(received=1, dropped=self._inputs.put((seq, frame)))
+                    self._record_received(seq, frame)
                     seq += 1
             except Exception as error:
                 self._set_source_state("lost", error)
                 self._stop.wait(self._reconnect_delay)
             finally:
-                source.close()
+                if source is not None:
+                    source.close()
 
     def _generate_loop(self) -> None:
         device = self._backend.device
@@ -223,26 +254,28 @@ class Runtime:
             # Wait for a free slot before taking a frame, so the frame taken is the freshest one.
             if len(in_flight) == IN_FLIGHT:
                 in_flight.popleft().wait_ms()
-            if self._source is not None:
-                item = self._inputs.take(POLL)
-                if item is None:
-                    continue
-            else:  # txt2img: pace Generation to the Sink's frame rate
-                next_due += 1 / self._settings.sink.fps
-                if self._stop.wait(max(0.0, next_due - time.monotonic())):
-                    break
-                next_due = max(next_due, time.monotonic() - 1 / self._settings.sink.fps)
-                item = (-1, None)
             try:
                 with torch.cuda.stream(stream):
-                    self._apply_pending()
+                    self._apply_pending()  # every pass, so changes apply even while no frames arrive
+                    if self._settings.source.transport != "none":
+                        item = self._inputs.take(POLL)
+                        if item is None:
+                            continue
+                    else:  # txt2img: pace Generation to the Sink's frame rate
+                        period = 1 / self._settings.sink.fps
+                        next_due = max(next_due + period, time.monotonic() - period)
+                        if self._stop.wait(max(0.0, next_due - time.monotonic())):
+                            break
+                        item = (-1, None)
                     generated = self._generate(*item)
             except Exception as error:  # e.g. a CUDA error: report it and carry on with the next frame
                 self._record_error(error)
                 self._stop.wait(POLL)
                 continue
             in_flight.append(generated.timing)
-            self._count(dropped=self._outputs.put(generated))
+            dropped = self._outputs.put(generated)
+            with self._lock:
+                self._dropped += dropped
 
     def _generate(self, seq: int, frame: InputFrame | None) -> _Generated:
         settings, device = self._settings, self._backend.device
@@ -254,7 +287,7 @@ class Runtime:
             rgb = imageops.to_rgb(raw, frame.width, frame.height, frame.row_bytes, frame.format)
             image = imageops.fit(rgb, gen.width, gen.height, settings.fit_mode) * 2 - 1
         result = self._core.generate(image, settings.strength, gen.width, gen.height)
-        out, fmt = settings.output, self._sink.format
+        out, fmt = settings.output, self._sink_format
         packed = imageops.to_bytes((result.float() + 1) / 2, out.width, out.height, fmt)
         host = host_buffer(packed.numel())
         host.copy_(packed, non_blocking=True)
@@ -263,22 +296,28 @@ class Runtime:
         return _Generated(output, timing)
 
     def _send_loop(self) -> None:
-        sink = self._sink
         while not self._stop.is_set():
+            wanted = self._settings.sink
+            sink: Sink | None = None
             try:
+                sink = self._transports.sink(wanted)
+                self._sink_format = sink.format
                 sink.open()
-                while not self._stop.is_set():
+                while not self._stop.is_set() and self._settings.sink == wanted:
                     generated = self._outputs.take(POLL)
                     if generated is None:
                         continue
                     generation_ms = generated.timing.wait_ms()
+                    if generated.frame.format != sink.format:
+                        continue  # generated for the previous Sink
                     sink.send(generated.frame)
-                    self._record_sent(generation_ms)
+                    self._record_sent(generated.frame, generation_ms)
             except Exception as error:
                 self._record_error(error)
                 self._stop.wait(self._reconnect_delay)
             finally:
-                sink.close()
+                if sink is not None:
+                    sink.close()
 
 
 def _rate(times: deque[float]) -> float:
