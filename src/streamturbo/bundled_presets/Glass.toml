@@ -1,0 +1,13 @@
+# The Glass Preset: the reference look and the default Settings (spec #2).
+fit_mode = "fill"
+prompt = "transparent translucent glass-like refraction sharp flower jellyfish scales claw petal leaf tail tree ,slime mold, Vibrant, glossy highlights, ethereal glow, masterpiece, 8k, best quality, high resolution, hdr, bloom"
+strength = 0.68
+seed = 2
+
+[generation]
+width = 1024
+height = 768
+
+[output]
+width = 1024
+height = 768
