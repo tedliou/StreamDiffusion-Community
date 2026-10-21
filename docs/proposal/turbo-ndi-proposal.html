@@ -1,0 +1,411 @@
+<title>StreamDiffusion Turbo 改造提案</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* Layout: sticky signal-flow index on the left, one reading column on the right; stacks to one column on phones */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --ink:#151a24; --muted:#5a6476; --line:#d9dee7;
+  --accent:#2747c9; --accent-soft:#e6ebfb; --warn:#a65d00; --warn-soft:#fbefdc;
+  --bad:#b4232c; --bad-soft:#fae3e4; --good:#1d7a4a; --good-soft:#dff2e7;
+  --f-display:"Archivo","Noto Sans TC",system-ui,sans-serif;
+  --f-body:"Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f131b; --surface:#171c27; --ink:#e6e9f0; --muted:#9aa4b6; --line:#2a3242;
+  --accent:#8ea4ff; --accent-soft:#1d2645; --warn:#f0b260; --warn-soft:#33270f;
+  --bad:#ff8a90; --bad-soft:#3a1a1d; --good:#6fd39c; --good-soft:#143022; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f131b; --surface:#171c27; --ink:#e6e9f0; --muted:#9aa4b6; --line:#2a3242;
+  --accent:#8ea4ff; --accent-soft:#1d2645; --warn:#f0b260; --warn-soft:#33270f;
+  --bad:#ff8a90; --bad-soft:#3a1a1d; --good:#6fd39c; --good-soft:#143022; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.7;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 64px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);align-self:start;padding-top:40px;font-size:13px}
+nav.toc .lbl{font-family:var(--f-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+nav.toc ol{list-style:none;margin:0;padding:0;border-left:2px solid var(--line)}
+nav.toc a{display:block;padding:4px 0 4px 12px;color:var(--muted);text-decoration:none;margin-left:-2px;border-left:2px solid transparent}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--accent);border-left-color:var(--accent);outline:none}
+main{min-width:0;padding-top:40px}
+header.hero{display:grid;gap:12px;padding-bottom:28px;border-bottom:1px solid var(--line)}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.1em;color:var(--accent);text-transform:uppercase}
+h1{font-family:var(--f-display);font-weight:800;font-size:clamp(28px,4.4vw,42px);line-height:1.15;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.lede{color:var(--muted);max-width:68ch;margin:0}
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-family:var(--f-mono);font-size:12.5px;margin-top:6px}
+.chain span{background:var(--surface);border:1px solid var(--line);padding:3px 9px;border-radius:3px}
+.chain b{color:var(--muted);font-weight:400}
+section{padding-top:44px;scroll-margin-top:16px}
+h2{font-family:var(--f-display);font-weight:700;font-size:23px;margin:0 0 6px;text-wrap:balance;display:flex;gap:12px;align-items:baseline}
+h2 .n{font-family:var(--f-mono);font-size:13px;color:var(--accent);font-weight:500}
+h3{font-size:16px;margin:24px 0 8px}
+p,li{max-width:72ch}
+.sub{color:var(--muted);margin:0 0 16px}
+code{font-family:var(--f-mono);font-size:.88em;background:var(--accent-soft);padding:1px 5px;border-radius:3px;overflow-wrap:anywhere}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface);margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.55}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700;font-size:12px;color:var(--muted);letter-spacing:.04em;background:var(--bg);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td.num,.num{font-variant-numeric:tabular-nums;font-family:var(--f-mono);white-space:nowrap}
+.pill{display:inline-block;font-size:11.5px;font-weight:700;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.p-bad{background:var(--bad-soft);color:var(--bad)} .p-warn{background:var(--warn-soft);color:var(--warn)}
+.p-good{background:var(--good-soft);color:var(--good)} .p-acc{background:var(--accent-soft);color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px;min-width:0}
+.card .k{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.card .v{font-family:var(--f-display);font-weight:700;font-size:20px;margin:2px 0}
+.card p{margin:0;font-size:13px;color:var(--muted)}
+.diagram{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;overflow-x:auto;margin:12px 0}
+pre.mermaid{margin:0;background:transparent;font-size:13px}
+ul.tight{padding-left:20px;margin:8px 0} ul.tight li{margin:3px 0}
+.q{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:10px 0;display:grid;gap:6px}
+.q .t{font-weight:700}
+.q .rec{font-size:13.5px;color:var(--muted)} .q .rec b{color:var(--good)}
+.note{border-left:3px solid var(--warn);background:var(--warn-soft);padding:10px 14px;border-radius:0 6px 6px 0;font-size:13.5px;margin:12px 0}
+a{color:var(--accent)}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted)}
+footer li{overflow-wrap:anywhere}
+@media (max-width:860px){.wrap{grid-template-columns:minmax(0,1fr);gap:0} nav.toc{display:none}}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="目錄">
+  <div class="lbl">Signal path</div>
+  <ol>
+    <li><a href="#summary">摘要與本機環境</a></li>
+    <li><a href="#paper">論文技術拆解</a></li>
+    <li><a href="#api">現有介面</a></li>
+    <li><a href="#defects">缺陷盤點</a></li>
+    <li><a href="#arch">目標架構</a></li>
+    <li><a href="#params">參數即時性</a></li>
+    <li><a href="#stack">技術棧定版</a></li>
+    <li><a href="#oneclick">一鍵啟動</a></li>
+    <li><a href="#perf">效能與品質路線</a></li>
+    <li><a href="#cleanup">清場清單</a></li>
+    <li><a href="#workflow">工作流遷移</a></li>
+    <li><a href="#milestones">里程碑</a></li>
+    <li><a href="#decisions">決策紀錄</a></li>
+    <li><a href="#risks">風險</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">Fork proposal · 2026-10-21 · v3（決策全部定案）</div>
+  <h1>StreamDiffusion → sd-turbo 即時 NDI 引擎</h1>
+  <p class="lede">把 StreamDiffusion 改造成 Windows 專用、針對 sd-turbo 單步 img2img 極致優化、clone 後一鍵啟動，並以 NDI 串接 TouchDesigner 的即時生成引擎。本頁為盤點、調查與分析後的提案，尚未修改任何程式碼。</p>
+  <div class="chain"><span>TouchDesigner</span><b>→ NDI / Spout →</b><span>GPU 前處理</span><b>→</b><span>TAESD enc</span><b>→</b><span>UNet ×1 step</span><b>→</b><span>TAESD dec</span><b>→ NDI / Spout →</b><span>TouchDesigner</span></div>
+</header>
+
+<section id="summary">
+<h2><span class="n">01</span>摘要與本機環境</h2>
+<ul class="tight">
+  <li><b>可行性高。</b>所需元件在 2026-10 皆有 Windows 官方 wheel：torch 2.14.1、TensorRT 11.4、cyndilib 0.1.3（已實測：wheel 內含 NDI runtime DLL，免另裝 NDI）。</li>
+  <li><b>sd-turbo 只需 1 步、guidance=0。</b>論文的 Stream Batch 與 RCFG 在這情境下幾乎用不到；真正的瓶頸會是 I/O、前後處理、CPU↔GPU 同步。</li>
+  <li><b>最大收益在「管線化」而非模型本身。</b>現有程式碼每幀強制同步、前後處理走 CPU/PIL，這部分改到 GPU 上並重疊執行，預期收益大於換新版 TensorRT。</li>
+  <li><b>建議重寫核心，不是修補。</b>現有 wrapper 的抽象是 SD1.5 + LCM 多步時代的產物，sd-turbo 專用路徑可以大幅簡化。</li>
+</ul>
+<div class="grid">
+  <div class="card"><div class="k">GPU</div><div class="v">RTX 3070 8 GB</div><p>Ampere sm_86：支援 FP16/INT8，<b>不支援 FP8</b></p></div>
+  <div class="card"><div class="k">Driver</div><div class="v num">621.01</div><p>CUDA UMD 13.5，滿足 cu13x 需求（≥ 580）</p></div>
+  <div class="card"><div class="k">CPU / RAM</div><div class="v">i7-12700 · 32 GB</div><p>NDI 編解碼走 CPU，餘裕充足</p></div>
+  <div class="card"><div class="k">TouchDesigner</div><div class="v num">2025.32050</div><p>內建 NDI In/Out TOP</p></div>
+  <div class="card"><div class="k">Python（uv）</div><div class="v num">3.11 – 3.14</div><p>uv 0.12.4 已安裝；系統無全域 python</p></div>
+  <div class="card"><div class="k">磁碟</div><div class="v">C: 剩 52 GB</div><p>C: 已用 90%，模型與 engine 快取應放 E:</p></div>
+</div>
+<div class="note">本機已裝 CUDA Toolkit 13.1 / 13.3 / 13.4。新架構<b>不需要</b> CUDA Toolkit，PyTorch 與 TensorRT 的 wheel 會自帶 runtime；只要顯卡驅動夠新即可。這也是「一鍵跑起來」的前提。舊 Toolkit 可視需要清理。</div>
+</section>
+
+<section id="paper">
+<h2><span class="n">02</span>論文技術拆解</h2>
+<p class="sub">StreamDiffusion（arXiv 2312.12491）六項技術，對照 sd-turbo 單步情境的實際價值。</p>
+<div class="tbl"><table>
+<thead><tr><th>技術</th><th>做什麼</th><th>論文收益</th><th>對 sd-turbo 1 步</th></tr></thead>
+<tbody>
+<tr><td>Stream Batch</td><td>把不同幀的不同去噪步合成一個 batch，一次 UNet 推進所有幀</td><td>≈1.5×（多步時）</td><td><span class="pill p-warn">無效</span> 只有 1 步，batch=1</td></tr>
+<tr><td>RCFG</td><td>用殘差雜訊當虛擬負向，免跑負向 UNet</td><td>2.05×（5 步）</td><td><span class="pill p-warn">無效</span> sd-turbo 官方建議 guidance=0</td></tr>
+<tr><td>I/O 佇列</td><td>前處理、推論、後處理分執行緒</td><td>未單獨量測</td><td><span class="pill p-good">關鍵</span> 現有程式碼其實沒做到，需重做</td></tr>
+<tr><td>SSF 相似幀過濾</td><td>畫面幾乎不變時機率性跳過推論</td><td>靜態畫面省電 2–2.4×</td><td><span class="pill p-good">保留並改良</span> 裝置現場常有靜態畫面</td></tr>
+<tr><td>預先計算</td><td>prompt embedding、雜訊、排程係數一次算好</td><td>—</td><td><span class="pill p-good">保留</span></td></tr>
+<tr><td>TAESD + TensorRT</td><td>小型 VAE、UNet/VAE 編譯為 TRT engine</td><td>1 步：21.3 → 10.65 ms（4090）</td><td><span class="pill p-good">核心加速</span></td></tr>
+</tbody></table></div>
+<h3>論文數據（RTX 4090）與 3070 推估</h3>
+<div class="tbl"><table>
+<thead><tr><th>設定</th><th>4090 實測</th><th>3070 推估</th><th>說明</th></tr></thead>
+<tbody>
+<tr><td>sd-turbo 1 步 + TRT</td><td class="num">10.65 ms · ~94 fps</td><td class="num">≈ 25–30 ms · 33–40 fps</td><td>推估依 FP16 算力比例，需以 benchmark 驗證</td></tr>
+<tr><td>sd-turbo 1 步，無 TRT</td><td class="num">21.34 ms</td><td class="num">≈ 50–60 ms</td><td>PyTorch 路徑，作為保底</td></tr>
+<tr><td>LCM-LoRA 4 步 + TRT</td><td class="num">26.93 ms</td><td>—</td><td>本提案不再以此為主</td></tr>
+</tbody></table></div>
+<ul class="tight">
+  <li><b>論文自述限制：</b>無時間一致性（閃爍）、TRT engine 為靜態尺寸、Stream Batch 吃 VRAM、Self-negative RCFG 會拉高對比。</li>
+  <li><b>StreamDiffusionV2（2025）</b>改為影片擴散模型（Wan 1.3B/14B、多張 H100），不能直接套用；可借鏡的是 rolling KV cache 與 motion-aware noise 的想法。</li>
+</ul>
+</section>
+
+<section id="api">
+<h2><span class="n">03</span>現有介面</h2>
+<p class="sub">兩層結構：<code>StreamDiffusion</code>（核心演算法）與 <code>utils/wrapper.py</code> 的 <code>StreamDiffusionWrapper</code>（載模型、加速、前後處理）。</p>
+<div class="tbl"><table>
+<thead><tr><th>層</th><th>API</th><th>用途</th><th>備註</th></tr></thead>
+<tbody>
+<tr><td>Wrapper</td><td><code>__init__(model_id, t_index_list, mode, width, height, acceleration, cfg_type, frame_buffer_size, use_tiny_vae, enable_similar_image_filter, …)</code></td><td>建構時決定一切</td><td>26 個參數，多數改了就得重建</td></tr>
+<tr><td>Wrapper</td><td><code>prepare(prompt, negative_prompt, num_inference_steps, guidance_scale, delta)</code></td><td>編碼 prompt、產生雜訊、算係數</td><td>會重抽雜訊，畫面跳動</td></tr>
+<tr><td>Wrapper</td><td><code>__call__(image, prompt)</code> → <code>img2img</code> / <code>txt2img</code></td><td>單幀推論</td><td>回傳 PIL，強制走 CPU</td></tr>
+<tr><td>Core</td><td><code>StreamDiffusion.__call__(x)</code></td><td>前處理 → VAE enc → UNet → VAE dec</td><td>每幀 <code>cuda.synchronize()</code></td></tr>
+<tr><td>Core</td><td><code>update_prompt(prompt)</code></td><td>只換正向 prompt</td><td>CFG full/initialize 時 batch 維度錯</td></tr>
+<tr><td>Core</td><td><code>enable_similar_image_filter(threshold, max_skip_frame)</code></td><td>SSF</td><td>可即時呼叫</td></tr>
+<tr><td>Core</td><td><code>load_lora / fuse_lora / load_lcm_lora</code></td><td>LoRA</td><td>TRT 模式下需重建 engine</td></tr>
+<tr><td>Accel</td><td><code>acceleration/tensorrt</code>：ONNX 匯出 → polygraphy → engine</td><td>UNet、VAE enc/dec 三顆 engine</td><td>依賴 polygraphy 與舊 TRT API</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="defects">
+<h2><span class="n">04</span>缺陷盤點</h2>
+<p class="sub">來自實際閱讀 <code>pipeline.py</code>、<code>wrapper.py</code>、<code>image_filter.py</code>、<code>acceleration/tensorrt</code>。</p>
+<div class="tbl"><table>
+<thead><tr><th>嚴重度</th><th>問題</th><th>位置</th><th>影響</th><th>改法</th></tr></thead>
+<tbody>
+<tr><td><span class="pill p-bad">高</span></td><td>每幀 <code>torch.cuda.synchronize()</code>，CPU 等 GPU</td><td><code>pipeline.py:466</code></td><td>無法重疊 I/O 與推論</td><td>CUDA event + 多 stream 管線</td></tr>
+<tr><td><span class="pill p-bad">高</span></td><td>前處理用 PIL / VaeImageProcessor，後處理 <code>.cpu()</code> 轉 PIL；wrapper 還多 resize 一次</td><td><code>wrapper.py:307-349</code></td><td>每幀數 ms 到十數 ms 的 CPU 開銷</td><td>uint8 上傳後在 GPU 做色彩轉換、縮放、正規化</td></tr>
+<tr><td><span class="pill p-bad">高</span></td><td>TRT engine 快取鍵沒有解析度、GPU、TRT 版本</td><td><code>wrapper.py:495-534</code></td><td>換解析度或升級後載入錯誤 engine</td><td>鍵含 model hash + 解析度範圍 + GPU + TRT 版本</td></tr>
+<tr><td><span class="pill p-warn">中</span></td><td>SSF 用 <code>.item()</code> 同步；跳幀時 <code>time.sleep()</code> 阻塞；以全解析度像素比對</td><td><code>image_filter.py</code>、<code>pipeline.py:453</code></td><td>反而拖慢、浪費頻寬</td><td>降採樣後在 GPU 比對，不阻塞，直接重送上一幀</td></tr>
+<tr><td><span class="pill p-warn">中</span></td><td><code>update_prompt</code> 忽略負向 prompt 與 CFG batch 拼接</td><td><code>pipeline.py:255</code></td><td>guidance&gt;1 時換 prompt 會崩</td><td>統一 prompt 狀態，支援平滑插值</td></tr>
+<tr><td><span class="pill p-warn">中</span></td><td>改 strength / 步數必須重跑 <code>prepare()</code>，雜訊重抽</td><td><code>pipeline.py:124</code></td><td>無法即時調參，畫面跳動</td><td>係數表預算 0–999 全部 timestep，改值只查表</td></tr>
+<tr><td><span class="pill p-warn">中</span></td><td>載入完整 <code>StableDiffusionPipeline</code>（含完整 VAE、safety checker）再替換</td><td><code>wrapper.py:_load_model</code></td><td>浪費 VRAM 與啟動時間</td><td>只載 UNet、CLIP text encoder、TAESD</td></tr>
+<tr><td><span class="pill p-warn">中</span></td><td>無時間一致性</td><td>架構層</td><td>影片閃爍</td><td>latent EMA → StreamV2V feature bank</td></tr>
+<tr><td><span class="pill p-acc">低</span></td><td>以 <code>"turbo" in model_id</code> 判斷模型</td><td><code>wrapper.py:121</code></td><td>本地路徑或改名即失效</td><td>模型描述檔（ModelSpec）</td></tr>
+<tr><td><span class="pill p-acc">低</span></td><td><code>prepare(generator=torch.Generator())</code> 可變預設參數，雜訊在 CPU 產生</td><td><code>pipeline.py:131</code></td><td>多實例共享 generator</td><td>每個 session 自己的 GPU generator</td></tr>
+<tr><td><span class="pill p-acc">低</span></td><td>stable-fast、xformers、polygraphy、Linux Dockerfile 等過時路徑</td><td>多處</td><td>相依地雷</td><td>刪除</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="arch">
+<h2><span class="n">05</span>目標架構</h2>
+<p class="sub">三條執行緒、兩條 CUDA stream，每個環節只保留「最新一幀」，避免延遲累積。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph TD["TouchDesigner"]
+    TDO["NDI Out / Spout Out TOP"]
+    TDI["NDI In / Spout In TOP"]
+    OSC["OSC Out CHOP"]
+  end
+  subgraph APP["sd-turbo 引擎（單一 Python 程序）"]
+    direction LR
+    RX["接收執行緒<br/>NDI（cyndilib · UYVY）<br/>或 Spout（SpoutGL）<br/>只留最新幀"]
+    UP["pinned buffer<br/>非同步上傳"]
+    subgraph GPU["GPU（CUDA graph）"]
+      PRE["UYVY→RGB<br/>縮放/裁切/正規化"]
+      SSF["SSF v2<br/>降採樣比對"]
+      ENC["TAESD enc"]
+      UNET["UNet 1 步<br/>TensorRT FP16"]
+      DEC["TAESD dec"]
+      POST["RGB→BGRA uint8"]
+    end
+    TX["送出執行緒<br/>NDI async send<br/>或 Spout"]
+    CTRL["控制層<br/>Settings 狀態"]
+    WEB["Web GUI<br/>WebSocket"]
+  end
+  TDO --> RX --> UP --> PRE --> SSF --> ENC --> UNET --> DEC --> POST --> TX --> TDI
+  WEB <--> CTRL
+  OSC --> CTRL
+  CTRL -.參數.-> GPU
+</pre></div>
+<h3>模組切分（預定）</h3>
+<div class="tbl"><table>
+<thead><tr><th>模組</th><th>職責</th><th>可替換性</th></tr></thead>
+<tbody>
+<tr><td><code>engine/</code></td><td>sd-turbo 單步 img2img / txt2img 核心，純 tensor in → tensor out</td><td>未來換模型只動 ModelSpec</td></tr>
+<tr><td><code>backends/</code></td><td>PyTorch（SDPA）、TensorRT 11；engine 建置與快取</td><td>可加 TensorRT-RTX</td></tr>
+<tr><td><code>io/</code></td><td><code>FrameSource</code> / <code>FrameSink</code> 介面；NDI 與 Spout 兩種實作</td><td>同機用 Spout，跨機用 NDI；之後可加檔案、webcam</td></tr>
+<tr><td><code>runtime/</code></td><td>執行緒、stream、最新幀信箱、指標（fps、延遲、VRAM、功耗）</td><td>—</td></tr>
+<tr><td><code>control/</code></td><td>Settings（pydantic）、預設檔、OSC、WebSocket</td><td>—</td></tr>
+<tr><td><code>ui/</code></td><td>靜態網頁 GUI（隨套件發佈，執行時不需 Node）</td><td>—</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="params">
+<h2><span class="n">06</span>參數即時性分級</h2>
+<p class="sub">GUI 上每個參數都會標示屬於哪一級，使用者知道改了會不會卡頓。</p>
+<div class="tbl"><table>
+<thead><tr><th>等級</th><th>參數</th><th>生效時間</th><th>做法</th></tr></thead>
+<tbody>
+<tr><td><span class="pill p-good">即時</span></td><td>prompt、prompt 混合權重、seed、strength（timestep）、SSF 門檻、時間平滑強度、輸出色彩/翻轉</td><td>下一幀</td><td>係數查表；prompt 重新編碼約數 ms，背景執行</td></tr>
+<tr><td><span class="pill p-warn">短暫重設</span></td><td>解析度（在 engine 動態範圍內）、傳輸方式（NDI↔Spout）、來源/輸出名稱、步數 1↔2</td><td>&lt; 1 秒</td><td>TRT 動態 shape profile，例如 256–1024；重配 buffer</td></tr>
+<tr><td><span class="pill p-bad">重建</span></td><td>超出範圍的解析度、換模型、換 LoRA（TRT 下）</td><td>數分鐘（首次）</td><td>背景建置新 engine，期間以 PyTorch 路徑持續出圖</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="stack">
+<h2><span class="n">07</span>技術棧定版</h2>
+<div class="tbl"><table>
+<thead><tr><th>項目</th><th>現況</th><th>提案</th><th>理由</th></tr></thead>
+<tbody>
+<tr><td>平台</td><td>Linux / WSL2 為主</td><td><b>Windows 10/11 x64 專用</b></td><td>需求明定</td></tr>
+<tr><td>Python</td><td>≥ 3.10</td><td><b>3.12</b>（uv 自動下載）</td><td>torch、TRT 11、cyndilib、SpoutGL、triton-windows 全部有 wheel</td></tr>
+<tr><td>PyTorch</td><td>未鎖</td><td><b>2.14.1 + cu130</b></td><td>Windows wheel 齊全；driver ≥ 580；最低 Turing（RTX 20）</td></tr>
+<tr><td>TensorRT</td><td>8/10 + polygraphy</td><td><b>11.4（tensorrt-cu13）</b>，原生 API</td><td>Windows cp310–314 wheel 已確認</td></tr>
+<tr><td>Attention</td><td>xformers</td><td><b>PyTorch SDPA</b></td><td>移除 xformers 相依</td></tr>
+<tr><td>diffusers / transformers</td><td>0.37 / 未鎖</td><td><b>0.41 / 5.x</b></td><td>只用 UNet、CLIP、AutoencoderTiny 三個元件</td></tr>
+<tr><td>NDI</td><td>無</td><td><b>cyndilib 0.1.3</b></td><td>MIT；Windows wheel 內含 NDI 6 runtime DLL 與授權文件（已實測）</td></tr>
+<tr><td>Spout</td><td>無</td><td><b>SpoutGL 0.1.1</b></td><td>BSD-3；cp38–313 win_amd64 wheel，Python 3.12 可用。從 Python 讀寫仍經過一次 CPU 拷貝，但沒有編碼壓縮</td></tr>
+<tr><td>VAE</td><td>taesd（選用）</td><td><b>taesd 固定使用</b></td><td>SD2 系相容，MIT</td></tr>
+<tr><td>GUI</td><td>Tk viewer</td><td><b>本機 Web GUI</b>（FastAPI + WebSocket）</td><td>可遠端操作、可與 TD 共用控制協定</td></tr>
+<tr><td>移除</td><td colspan="3">stable-fast、xformers、polygraphy、onnxruntime、LCM-LoRA 預設路徑、safety checker、Dockerfile、<code>pip_utils.py</code>、<code>install-tensorrt.py</code></td></tr>
+</tbody></table></div>
+</section>
+
+<section id="oneclick">
+<h2><span class="n">08</span>一鍵啟動</h2>
+<p class="sub">使用者只做兩件事：<code>git clone</code>、雙擊 <code>start.cmd</code>。</p>
+<div class="diagram"><pre class="mermaid">
+flowchart TD
+  A["雙擊 start.cmd"] --> B{"nvidia-smi 可用？<br/>driver ≥ 580？"}
+  B -- 否 --> B1["顯示驅動下載連結後結束"]
+  B -- 是 --> C{"已有 uv？"}
+  C -- 否 --> C1["官方安裝腳本安裝 uv"] --> D
+  C -- 是 --> D["uv sync --frozen<br/>自動下載 Python 3.12 與 wheel"]
+  D --> E{"模型已在 ./models？"}
+  E -- 否 --> E1["下載 sd-turbo + taesd<br/>HF_HOME 指到專案內"] --> F
+  E -- 是 --> F["啟動引擎 + 開啟 GUI"]
+  F --> G{"有對應此 GPU 的 TRT engine？"}
+  G -- 是 --> H["TensorRT 路徑出圖"]
+  G -- 否 --> I["PyTorch 路徑先出圖<br/>背景建置 engine"] --> H
+</pre></div>
+<ul class="tight">
+  <li>不需要 CUDA Toolkit、Visual Studio、NDI Tools、Spout 安裝程式、Node.js。</li>
+  <li>所有下載物（Python、wheel、模型、engine）都在專案資料夾或 uv 快取內，刪資料夾即乾淨移除。</li>
+  <li>engine 快取路徑：<code>cache/engines/&lt;gpu&gt;-trt&lt;ver&gt;/&lt;model-hash&gt;/</code>。</li>
+</ul>
+</section>
+
+<section id="perf">
+<h2><span class="n">09</span>效能與品質路線</h2>
+<p class="sub">收益為依文獻與經驗的估計，會在 M1 建立 benchmark 後以實測取代。</p>
+<div class="tbl"><table>
+<thead><tr><th>項目</th><th>類型</th><th>預期收益</th><th>風險</th><th>階段</th></tr></thead>
+<tbody>
+<tr><td>GPU 前後處理 + pinned memory + 非同步拷貝</td><td>速度</td><td>每幀省數 ms 至十數 ms CPU 時間</td><td>低</td><td>M1</td></tr>
+<tr><td>三段管線重疊（接收 / 推論 / 送出）</td><td>速度、延遲</td><td>吞吐量 ≈ 最慢一段</td><td>低</td><td>M1</td></tr>
+<tr><td>同機改用 Spout 傳輸</td><td>延遲、畫質</td><td>省去 NDI 的 CPU 編解碼，沒有壓縮色帶</td><td>低：需在程序內建立 OpenGL context</td><td>M1</td></tr>
+<tr><td>只載必要元件、FP16、channels_last</td><td>VRAM</td><td>省下完整 VAE 與 safety checker 的 VRAM</td><td>低</td><td>M1</td></tr>
+<tr><td>TensorRT 11 FP16（UNet + TAESD）</td><td>速度</td><td>約 2×（論文 21.3 → 10.65 ms）</td><td>中：首次建置數分鐘</td><td>M3</td></tr>
+<tr><td>CUDA graph 包整個單步</td><td>速度</td><td>省 kernel launch 開銷，約 1–2 ms</td><td>中：需固定 buffer</td><td>M3</td></tr>
+<tr><td>SSF v2（降採樣、無同步、可調）</td><td>省電</td><td>靜態畫面功耗約減半（論文 2–2.4×）</td><td>低</td><td>M3</td></tr>
+<tr><td>Latent EMA + 固定雜訊</td><td>品質</td><td>明顯降低閃爍，幾乎零成本</td><td>低：殘影</td><td>M4</td></tr>
+<tr><td>StreamV2V feature bank</td><td>品質</td><td>時間一致性大幅提升</td><td>中：慢 10–30%，需改 attention processor</td><td>M4</td></tr>
+<tr><td>Prompt 插值 / 平滑切換</td><td>品質</td><td>換 prompt 不跳畫面</td><td>低</td><td>M4</td></tr>
+<tr><td>非正方形解析度（例如 640×360、768×432）</td><td>品質</td><td>配合 TD 16:9 畫面，不必裁切</td><td>低：需 8 的倍數</td><td>M4</td></tr>
+<tr><td>INT8 量化（ModelOpt）</td><td>速度</td><td>UNet 約 1.2×</td><td>高：1 步畫質較敏感；3070 無 FP8</td><td>M5 實驗</td></tr>
+<tr><td>TensorRT-RTX（JIT、跨 GPU 可攜）</td><td>部署</td><td>免逐機建置 engine</td><td>中：成熟度較低</td><td>M5 實驗</td></tr>
+<tr><td>DeepCache</td><td>—</td><td>不採用</td><td>只對多步有效</td><td>—</td></tr>
+</tbody></table></div>
+<h3>驗收指標（每個里程碑量測）</h3>
+<ul class="tight">
+  <li><b>吞吐量</b>：512×512 與 640×360 下的 fps。3070 目標：TensorRT ≥ 30 fps。</li>
+  <li><b>端到端延遲</b>：TD 送出時間戳圖樣，回收後比對。目標 ≤ 3 幀。</li>
+  <li><b>資源</b>：VRAM 峰值、GPU 使用率、功耗（NVML）。</li>
+  <li><b>品質</b>：相鄰幀差（閃爍指標）與固定測試影片的目視比較。</li>
+</ul>
+</section>
+
+<section id="cleanup">
+<h2><span class="n">10</span>清場清單</h2>
+<div class="tbl"><table>
+<thead><tr><th>動作</th><th>路徑</th></tr></thead>
+<tbody>
+<tr><td><span class="pill p-bad">刪除</span></td><td><code>.agents/</code>、<code>.codex/</code>、<code>openspec/</code>、<code>.github/prompts/</code>、<code>.github/skills/</code>、<code>docs/openspec-workflow.md</code></td></tr>
+<tr><td><span class="pill p-bad">刪除</span></td><td><code>Dockerfile</code>、<code>.dockerignore</code>、<code>src/streamdiffusion/acceleration/sfast/</code>、<code>pip_utils.py</code>、<code>tools/install-tensorrt.py</code>、<code>compat.py</code>、<code>diffusers_compat.py</code> 與對應測試</td></tr>
+<tr><td><span class="pill p-bad">刪除</span></td><td><code>models/LCM_LoRA</code> 等佔位資料夾、<code>utils/viewer.py</code>（Tk）</td></tr>
+<tr><td><span class="pill p-bad">刪除</span></td><td><code>AGENTS.md</code>（不保留給其他工具，改由 <code>CLAUDE.md</code> 取代）</td></tr>
+<tr><td><span class="pill p-warn">重寫</span></td><td><code>README.md</code>、<code>pyproject.toml</code>、<code>uv.lock</code>、<code>utils/wrapper.py</code> 併入套件</td></tr>
+<tr><td><span class="pill p-good">保留</span></td><td><code>LICENSE</code>（Apache-2.0，fork 須保留並註明修改）、git 歷史、<code>pipeline.py</code> 的數學作為參考實作、<code>assets/</code> 部分示意圖</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="workflow">
+<h2><span class="n">11</span>工作流遷移</h2>
+<p class="sub">OpenSpec 換成 mattpocock skills。本機已安裝 <code>mattpocock-skills</code> plugin，可直接使用。</p>
+<div class="tbl"><table>
+<thead><tr><th>用途</th><th>Skill</th><th>產物位置</th></tr></thead>
+<tbody>
+<tr><td>需求壓力測試</td><td><code>grilling</code></td><td>對話，結論寫進 ADR</td></tr>
+<tr><td>名詞與決策紀錄</td><td><code>domain-modeling</code></td><td><code>GLOSSARY.md</code>、<code>docs/adr/NNNN-*.md</code></td></tr>
+<tr><td>模組邊界設計</td><td><code>codebase-design</code></td><td>程式碼與 ADR</td></tr>
+<tr><td>實作</td><td><code>tdd</code></td><td><code>tests/</code></td></tr>
+<tr><td>除錯、效能退化</td><td><code>diagnosing-bugs</code></td><td>修正 + 回歸測試</td></tr>
+<tr><td>技術調查</td><td><code>research</code></td><td><code>docs/research/*.md</code></td></tr>
+<tr><td>GUI 試作</td><td><code>prototype</code></td><td>拋棄式原型</td></tr>
+<tr><td>審查與 PR</td><td><code>code-review</code>、<code>pr</code></td><td>GitHub PR</td></tr>
+<tr><td>Agent 指引</td><td><code>writing-for-agents</code></td><td>精簡的 <code>CLAUDE.md</code>（唯一的 agent 指引檔，不再有 <code>AGENTS.md</code>）</td></tr>
+</tbody></table></div>
+<p>首批 ADR 草案：0001 Windows 專用；0002 sd-turbo 單步優先；0003 NDI 與 Spout 雙傳輸、共用介面；0004 TensorRT 11 + PyTorch 保底；0005 GUI 形式；0006 非商用定位與授權義務。</p>
+<div class="note"><b>順序建議：</b>先由你初始化 mattpocock skills，再進 M0。現有 <code>AGENTS.md</code> 仍寫著「Linux 開發」與「OpenSpec 為唯一事實來源」，初始化工具若會讀取它，請忽略其中規範；M0 會整份刪除。</div>
+</section>
+
+<section id="milestones">
+<h2><span class="n">12</span>里程碑</h2>
+<div class="tbl"><table>
+<thead><tr><th>階段</th><th>內容</th><th>完成定義</th></tr></thead>
+<tbody>
+<tr><td class="num">M0</td><td>清場、工作流遷移、新 <code>pyproject.toml</code>（Python 3.12、torch cu130）、<code>start.cmd</code>、ADR 與 GLOSSARY</td><td>乾淨 clone 後 <code>start.cmd</code> 能建好環境並印出 GPU 資訊</td></tr>
+<tr><td class="num">M1</td><td>新核心（PyTorch + SDPA）、GPU 前後處理、NDI 與 Spout 收送、三段管線、benchmark 工具</td><td>TD → 引擎 → TD 來回出圖，NDI 與 Spout 都可用；有兩者的 fps 與延遲對照報告</td></tr>
+<tr><td class="num">M2</td><td>Web GUI、Settings、預設檔、OSC</td><td>不重啟即可調整「即時」等級的所有參數</td></tr>
+<tr><td class="num">M3</td><td>TensorRT 11、動態 shape、engine 快取、CUDA graph、SSF v2</td><td>3070 上 512×512 ≥ 30 fps（實測為準）</td></tr>
+<tr><td class="num">M4</td><td>時間一致性、prompt 插值、非正方形解析度</td><td>閃爍指標較 M3 明顯下降</td></tr>
+<tr><td class="num">M5</td><td>擴充：sdxl-turbo / Hyper-SD、INT8、TensorRT-RTX、ControlNet</td><td>依需求挑選</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="decisions">
+<h2><span class="n">13</span>決策紀錄</h2>
+<h3>已決定</h3>
+<div class="tbl"><table>
+<thead><tr><th>項目</th><th>決定</th><th>對提案的影響</th></tr></thead>
+<tbody>
+<tr><td>同機傳輸加 Spout</td><td><span class="pill p-good">要</span></td><td>Spout 從 M5 提前到 M1，和 NDI 共用 <code>FrameSource</code>/<code>FrameSink</code> 介面；GUI 可切換傳輸方式</td></tr>
+<tr><td>商業用途</td><td><span class="pill p-good">無</span></td><td>sd-turbo 授權風險解除，sdxl-turbo（非商用授權）也可列入未來候選。NDI 不論是否商用，仍須在 GUI 與 README 放 ndi.video 連結並附授權文字</td></tr>
+<tr><td>保留 <code>AGENTS.md</code></td><td><span class="pill p-bad">不要</span></td><td>M0 刪除；agent 指引只剩 <code>CLAUDE.md</code></td></tr>
+</tbody></table></div>
+<h3>以下全部採用建議（2026-10-21 確認）</h3>
+<div class="q"><div class="t">1. GUI 形式</div><div class="rec"><b>建議：本機 Web GUI</b>（瀏覽器開 <code>localhost</code>，可用平板遠端操作）。替代：原生視窗（Dear PyGui，單機但較快上手）、或只做 OSC 讓 TouchDesigner 當操作介面。</div></div>
+<div class="q"><div class="t">2. 支援的最低顯卡</div><div class="rec"><b>建議：RTX 20 系列以上、VRAM ≥ 8 GB。</b>CUDA 13 與 TensorRT 11 都已不支援 GTX 10 系列。RTX 3070 作為參考機。</div></div>
+<div class="q"><div class="t">4. 加速後端</div><div class="rec"><b>建議：TensorRT 11 為主，PyTorch 保底，TensorRT-RTX 列為實驗。</b>TRT 11 速度最好，但每台 GPU 首次要建置 engine（數分鐘）。</div></div>
+<div class="q"><div class="t">6. 專案與套件名稱</div><div class="rec"><b>建議：改名</b>，避免與上游 PyPI 套件 <code>streamdiffusion</code> 衝突，並在 README 註明 fork 來源。</div></div>
+<div class="q"><div class="t">7. 是否保留 SD1.5 + LCM 多步路徑</div><div class="rec"><b>建議：先移除</b>，以 ModelSpec 抽象保留未來擴充的位置。Stream Batch 與 RCFG 的程式碼留在 git 歷史可查。</div></div>
+<div class="q"><div class="t">8. 文件語言</div><div class="rec"><b>建議：README 用正體中文加英文摘要，刪除日文與韓文版。</b></div></div>
+<div class="q"><div class="t">9. 生成解析度與輸出尺寸</div><div class="rec"><b>建議：以 512 級解析度生成（例如 640×360），送出前在 GPU 上放大到 TD 要的尺寸（例如 1280×720）。</b>sd-turbo 在 512 附近訓練，直接生成 720p 會變慢且構圖較差。</div></div>
+</section>
+
+<section id="risks">
+<h2><span class="n">14</span>風險</h2>
+<div class="tbl"><table>
+<thead><tr><th>風險</th><th>機率</th><th>對策</th></tr></thead>
+<tbody>
+<tr><td>8 GB VRAM 上同時建置 TRT engine 與運行 PyTorch 路徑會不夠</td><td><span class="pill p-warn">中</span></td><td>建置時暫停 PyTorch 路徑，或另開程序建置</td></tr>
+<tr><td>transformers v5 對 CLIP 載入的破壞性變更</td><td><span class="pill p-warn">中</span></td><td>M1 鎖版本並寫載入測試</td></tr>
+<tr><td>NDI 壓縮造成延遲與色帶</td><td><span class="pill p-warn">中</span></td><td>M1 以時間戳圖樣實測；同機情境改用 Spout</td></tr>
+<tr><td>SpoutGL 需要 OpenGL context，且尚無 Python 3.14 wheel</td><td><span class="pill p-acc">低</span></td><td>鎖定 Python 3.12；Spout 收送放在獨立執行緒並建立隱藏 context</td></tr>
+<tr><td>cyndilib 仍為 alpha</td><td><span class="pill p-acc">低</span></td><td>以 <code>FrameSource</code>/<code>FrameSink</code> 介面隔離，可換 ndi-python</td></tr>
+<tr><td>3070 實測 fps 低於推估</td><td><span class="pill p-acc">低</span></td><td>降解析度、INT8、TensorRT-RTX</td></tr>
+</tbody></table></div>
+</section>
+
+<footer>
+  <b>資料來源</b>
+  <ul class="tight">
+    <li>StreamDiffusion 論文 arxiv.org/abs/2312.12491；StreamDiffusionV2 arxiv.org/abs/2511.07399；StreamV2V arxiv.org/abs/2405.15757</li>
+    <li>huggingface.co/stabilityai/sd-turbo；github.com/madebyollin/taesd</li>
+    <li>PyPI JSON：torch、tensorrt_cu13_bindings 11.4.0.106、tensorrt_rtx_cu13_bindings 1.7.1.116、cyndilib 0.1.3（wheel 內容已實測）、SpoutGL 0.1.1</li>
+    <li>download.pytorch.org/whl/torch（cu126/cu130/cu132 Windows wheel）；docs.nvidia.com CUDA 與 TensorRT support matrix</li>
+    <li>docs.ndi.video（SDK 散布條款、接收格式）；docs.derivative.ca NDI In/Out TOP</li>
+    <li>參考 fork：github.com/daydreamlive/StreamDiffusion（Apache-2.0，含 SDXL、ControlNet、StreamV2V，無 NDI）</li>
+  </ul>
+</footer>
+</main>
+</div>
