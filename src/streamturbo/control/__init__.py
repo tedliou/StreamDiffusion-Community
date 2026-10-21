@@ -20,7 +20,6 @@ from streamturbo.runtime import Runtime
 from streamturbo.settings import describe
 from streamturbo.transports import Transports
 
-Event = tuple[str, dict[str, Any]]  # ("settings" | "presets", payload)
 Listener = Callable[[str, dict[str, Any]], None]
 
 PREVIEW_WIDTH = 480

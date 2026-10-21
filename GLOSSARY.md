@@ -79,7 +79,7 @@ A Setting whose change briefly pauses output while buffers are rebuilt.
 A Setting whose change needs a new Engine to be built before it fully takes effect.
 
 **Preset**:
-A named, saved snapshot of Settings that can be recalled.
+A named, saved snapshot of the look Settings that can be recalled. It leaves out the Source and Sink, so a Preset works at any venue.
 _Avoid_: Profile, scene
 
 **Control Surface**:
