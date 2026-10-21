@@ -3,12 +3,15 @@
 import importlib
 import importlib.metadata
 import platform
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from types import ModuleType
 
+# MIN_DRIVER_MAJOR and DRIVER_URL are also checked by start.cmd before Python exists; keep them in step.
 MIN_DRIVER_MAJOR = 580  # CUDA 13 (ADR-0001)
+DRIVER_URL = "https://www.nvidia.com/Download/index.aspx"
 MIN_COMPUTE_CAPABILITY = (7, 5)  # Turing
 MIN_VRAM_GIB = 8
-DRIVER_URL = "https://www.nvidia.com/Download/index.aspx"
 
 
 @dataclass(frozen=True)
@@ -21,7 +24,7 @@ class Gpu:
 
 
 @dataclass(frozen=True)
-class Transport:
+class TransportStatus:
     name: str
     available: bool
     detail: str
@@ -35,7 +38,7 @@ class Report:
     torch_version: str | None = None
     torch_cuda: str | None = None
     cuda_available: bool = False
-    transports: list[Transport] = field(default_factory=list)
+    transports: list[TransportStatus] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -88,7 +91,7 @@ def _collect_gpus(report: Report) -> None:
         report.warnings.append(f"{supported[0].name} has less than {MIN_VRAM_GIB} GB of VRAM.")
 
 
-def _watts(query, handle) -> float | None:
+def _watts(query: Callable[[object], int], handle: object) -> float | None:
     try:
         return query(handle) / 1000
     except Exception:
@@ -120,12 +123,12 @@ def _collect_transports(report: Report) -> None:
         report.warnings.append(f"{name} is not available.")
 
 
-def _probe(name: str, module_name: str, describe) -> Transport:
+def _probe(name: str, module_name: str, describe: Callable[[ModuleType], str]) -> TransportStatus:
     try:
         module = importlib.import_module(module_name)
-        return Transport(name, True, describe(module))
+        return TransportStatus(name, True, describe(module))
     except Exception as exc:
-        return Transport(name, False, str(exc))
+        return TransportStatus(name, False, str(exc))
 
 
 def render(report: Report) -> str:

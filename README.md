@@ -29,7 +29,7 @@ start.cmd
 `start.cmd` 依序做這些事：
 
 1. 檢查 NVIDIA 驅動程式版本，太舊就停下並提供更新連結。
-2. 找不到 uv 時，把 uv 安裝到 `cache\bin`。
+2. 把固定版本的 uv 安裝到 `cache\bin`（已安裝就沿用），不使用系統上的其他 uv。
 3. 依照 lockfile 同步 Python 3.12 和所有套件（含 CUDA runtime）。第一次執行會下載數 GB。
 4. 執行 `streamturbo doctor` 檢查環境。
 
@@ -70,5 +70,5 @@ uv run pytest -m "not gpu"
 ## 授權
 
 - 程式碼採用 [Apache-2.0](LICENSE)，源自 StreamDiffusion，詳見 [NOTICE](NOTICE)。
-- 僅供非商業用途。sd-turbo 權重採用 Stability AI Community License。
+- sd-turbo 模型權重另採 Stability AI Community License，商業使用須遵守該授權條款。本專案本身以非商業用途開發。
 - NDI® 是 Vizrt NDI AB 的註冊商標，詳見 [ndi.video](https://ndi.video)。
