@@ -62,7 +62,7 @@ def _run(settings) -> int:
     from streamturbo.transports import create_sink, create_source
 
     print("Loading sd-turbo ...")
-    backend = PyTorchBackend(SD_TURBO, *weights.fetch_all(SD_TURBO))
+    backend = PyTorchBackend(*weights.fetch_all(SD_TURBO))
     source, sink = create_source(settings.source), create_sink(settings.sink)
     src, dst = settings.source, settings.sink
     print(f"Source: {src.transport} {src.name or '(first visible)'}  ->  Sink: {dst.transport} {dst.name}")
@@ -73,7 +73,7 @@ def _run(settings) -> int:
                 time.sleep(1)
                 status = runtime.status()
                 line = (
-                    f"source {status.source_state:<7} | {status.throughput_fps:5.1f} fps | "
+                    f"source {status.source_state:<7} | throughput {status.throughput_fps:5.1f} fps | "
                     f"generation {status.generation_ms_p50:5.0f} ms p50, {status.generation_ms_p95:5.0f} ms p95 | "
                     f"dropped {status.dropped_frames}"
                 )

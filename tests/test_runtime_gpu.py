@@ -20,7 +20,7 @@ VRAM_BUDGET_GIB = 4.0  # Glass at 1024x768 measured 2.9 GiB peak; TouchDesigner 
 def backend():
     from streamturbo.backends.pytorch import PyTorchBackend
 
-    return PyTorchBackend(SD_TURBO, *weights.fetch_all(SD_TURBO))
+    return PyTorchBackend(*weights.fetch_all(SD_TURBO))
 
 
 @pytest.fixture

@@ -32,7 +32,7 @@ def run(settings: Settings, frames: int = 120, out: Path | None = None) -> Path:
 
     out = out or output_dir() / "bench"
     out.mkdir(parents=True, exist_ok=True)
-    backend = PyTorchBackend(SD_TURBO, *weights.fetch_all(SD_TURBO))
+    backend = PyTorchBackend(*weights.fetch_all(SD_TURBO))
     gen = settings.generation
     source = MemorySource(repeat_fps=240)  # a fresh Input Frame is always waiting
     source.push(input_frame(synthetic_frame(gen.width, gen.height)))

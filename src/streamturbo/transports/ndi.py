@@ -116,6 +116,7 @@ class NdiSink:
         self.fps = Fraction(fps).limit_denominator(1001)
         self._sender: Sender | None = None
         self._size: tuple[int, int] | None = None
+        self._in_flight: OutputFrame | None = None  # NDI reads an async frame until the next send
 
     def open(self) -> None:
         pass  # the sender opens on the first frame, when its resolution is known
@@ -125,6 +126,7 @@ class NdiSink:
             self._start(frame.width, frame.height)
         assert self._sender is not None
         self._sender.write_video_async(frame.data.numpy())
+        self._in_flight = frame
 
     def _start(self, width: int, height: int) -> None:
         self.close()
@@ -140,4 +142,4 @@ class NdiSink:
     def close(self) -> None:
         if self._sender is not None:
             self._sender.close()
-            self._sender, self._size = None, None
+            self._sender, self._size, self._in_flight = None, None, None

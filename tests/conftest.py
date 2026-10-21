@@ -11,7 +11,8 @@ class FakeBackend:
     """A deterministic, cheap image transform standing in for sd-turbo on CPU.
 
     Its UNet predicts no noise, so Output Frames are the Input Frame plus the Seed's noise, scaled
-    by Strength, pushed through an 8x down/up-sample. `unet_delay` simulates a slow GPU.
+    by Strength, pushed through an 8x down/up-sample. `unet_delay` simulates a slow GPU and
+    `failures` makes that many UNet calls raise.
     """
 
     name = "fake"
@@ -24,6 +25,7 @@ class FakeBackend:
         betas = torch.linspace(0.00085**0.5, 0.012**0.5, 1000) ** 2
         self.alphas_cumprod = torch.cumprod(1 - betas, 0)
         self.unet_delay = unet_delay
+        self.failures = 0
         self.prompts: list[str] = []
 
     def encode_prompt(self, prompt: str) -> torch.Tensor:
@@ -40,6 +42,9 @@ class FakeBackend:
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
         if self.unet_delay:
             time.sleep(self.unet_delay)
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError("CUDA error: an illegal memory access was encountered")
         return torch.zeros_like(latents)
 
 

@@ -4,15 +4,13 @@ from pathlib import Path
 
 import torch
 
-from streamturbo.model_spec import ModelSpec
-
 
 class PyTorchBackend:
     name = "pytorch"
     latent_channels = 4
     latent_scale = 8
 
-    def __init__(self, spec: ModelSpec, model_dir: Path, tiny_vae_dir: Path, device: str = "cuda") -> None:
+    def __init__(self, model_dir: Path, tiny_vae_dir: Path, device: str = "cuda") -> None:
         from diffusers.models.autoencoders.autoencoder_tiny import AutoencoderTiny
         from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
         from diffusers.schedulers.scheduling_euler_discrete import EulerDiscreteScheduler
@@ -20,7 +18,6 @@ class PyTorchBackend:
 
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
-        self.spec = spec
         self.device = torch.device(device)
         self.dtype = torch.float16
         # The libraries' decorated `.to` and union-typed `from_pretrained` mislead pyright, hence the ignores.

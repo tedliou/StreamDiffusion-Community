@@ -117,6 +117,28 @@ def test_without_a_source_the_runtime_generates_txt2img_at_the_sink_rate(small_s
     assert 5 <= len(sink.frames) <= 20
 
 
+def test_txt2img_ignores_strength(small_settings):
+    sink = MemorySink()
+    with Runtime(small_settings.model_copy(update={"strength": 1.0}), FakeBackend(), None, sink) as runtime:
+        full = sink.wait_for(lambda f: True)
+        version = runtime.update(strength=0.2)
+        low = sink.wait_for(lambda f: f.settings_version == version)
+
+    assert torch.equal(full.data, low.data)
+
+
+def test_generation_error_is_reported_and_generation_continues(small_settings):
+    backend, sink = FakeBackend(), MemorySink()
+    with Runtime(small_settings, backend, None, sink) as runtime:
+        sink.wait_for(lambda f: True)
+        backend.failures = 1
+        wait_until(lambda: runtime.status().error is not None)
+        sent = runtime.status().frames_sent
+        wait_until(lambda: runtime.status().frames_sent > sent + 2)
+
+    assert "illegal memory access" in (runtime.status().error or "")
+
+
 def test_status_reports_throughput_and_generation_time(small_settings):
     source, sink = MemorySource(repeat_fps=100), MemorySink()
     with Runtime(small_settings, FakeBackend(unet_delay=0.02), source, sink) as runtime:

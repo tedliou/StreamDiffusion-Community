@@ -66,18 +66,15 @@ class MemorySource:
 class MemorySink:
     """Keeps every Output Frame it is sent."""
 
-    def __init__(self, fmt: PixelFormat = PixelFormat.RGBA, delay: float = 0.0) -> None:
+    def __init__(self, fmt: PixelFormat = PixelFormat.RGBA) -> None:
         self.format = fmt
         self.frames: list[OutputFrame] = []
-        self._delay = delay
         self._arrived = threading.Condition()
 
     def open(self) -> None:
         pass
 
     def send(self, frame: OutputFrame) -> None:
-        if self._delay:
-            time.sleep(self._delay)
         with self._arrived:
             self.frames.append(frame)
             self._arrived.notify_all()

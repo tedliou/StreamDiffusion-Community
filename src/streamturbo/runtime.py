@@ -54,7 +54,7 @@ class _Timing:
 @dataclass(frozen=True)
 class RuntimeStatus:
     source_state: SourceState  # none: no Source (txt2img); waiting: no frame yet; lost: frames stopped
-    error: str | None  # the latest Transport error, cleared when frames flow again
+    error: str | None  # the latest Transport or Generation error, cleared when the Source comes back
     frames_received: int
     frames_sent: int
     dropped_frames: int  # replaced in a mailbox before anyone read them
@@ -136,13 +136,13 @@ class Runtime:
             return version + 1
 
     def _apply_pending(self) -> None:
-        with self._lock:
+        with self._lock:  # one step, so a concurrent update() never builds on superseded Settings
             pending, self._pending = self._pending, None
+            if pending is not None:
+                self._settings, self._settings_version = pending
         if pending is not None:
-            settings, version = pending
-            self._core.set_prompt(settings.prompt)
-            self._core.set_seed(settings.seed)
-            self._settings, self._settings_version = settings, version
+            self._core.set_prompt(self._settings.prompt)
+            self._core.set_seed(self._settings.seed)
 
     def status(self) -> RuntimeStatus:
         with self._lock:
@@ -158,19 +158,22 @@ class Runtime:
                 backend=self._backend.name,
             )
 
-    def _set_source_state(self, state: SourceState, error: Exception | None = None) -> None:
+    def _record_error(self, error: Exception) -> None:
         with self._lock:
-            if error is not None:
-                self._error = f"{type(error).__name__}: {error}"
-            elif state == "live":
-                self._error = None
+            self._error = f"{type(error).__name__}: {error}"
+
+    def _set_source_state(self, state: SourceState, error: Exception | None = None) -> None:
+        if error is not None:
+            self._record_error(error)
+        with self._lock:
+            if state == "live" and self._source_state != "live":
+                self._error = None  # a Source that comes back clears the error that took it down
             if state != "lost" or self._source_state == "live":
                 self._source_state = state
 
-    def _count(self, *, received: int = 0, sent: int = 0, dropped: int = 0) -> None:
+    def _count(self, *, received: int = 0, dropped: int = 0) -> None:
         with self._lock:
             self._received += received
-            self._sent += sent
             self._dropped += dropped
 
     def _record_sent(self, generation_ms: float) -> None:
@@ -230,9 +233,14 @@ class Runtime:
                     break
                 next_due = max(next_due, time.monotonic() - 1 / self._settings.sink.fps)
                 item = (-1, None)
-            with torch.cuda.stream(stream):
-                self._apply_pending()
-                generated = self._generate(*item)
+            try:
+                with torch.cuda.stream(stream):
+                    self._apply_pending()
+                    generated = self._generate(*item)
+            except Exception as error:  # e.g. a CUDA error: report it and carry on with the next frame
+                self._record_error(error)
+                self._stop.wait(POLL)
+                continue
             in_flight.append(generated.timing)
             self._count(dropped=self._outputs.put(generated))
 
@@ -267,8 +275,7 @@ class Runtime:
                     sink.send(generated.frame)
                     self._record_sent(generation_ms)
             except Exception as error:
-                with self._lock:
-                    self._error = f"{type(error).__name__}: {error}"
+                self._record_error(error)
                 self._stop.wait(self._reconnect_delay)
             finally:
                 sink.close()

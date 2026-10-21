@@ -51,7 +51,7 @@ class GenerationCore:
             return backend.decode(backend.encode(image))
 
         noise = self._noise_for(width, height)
-        t = timestep_for(strength)
+        t = timestep_for(1.0 if image is None else strength)
         signal, noise_level = self._signal[t], self._noise[t]
         if image is None or strength >= 1:
             noisy = noise_level * noise

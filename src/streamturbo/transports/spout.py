@@ -9,6 +9,7 @@ Each endpoint creates its own hidden OpenGL context in open(), on the thread tha
 import time
 
 import SpoutGL
+import torch
 from SpoutGL.enums import GL_RGBA
 
 from streamturbo.frames import InputFrame, OutputFrame, PixelFormat, host_buffer
@@ -34,13 +35,15 @@ class SpoutSource:
         self._settled = False  # the first image after a (re)connection or resize comes back empty
         self._last_count = -1
         self._next_copy = 0.0
+        self._buffer: torch.Tensor | None = None
 
     def open(self) -> None:
         receiver = SpoutGL.SpoutReceiver()
         if not receiver.createOpenGL():
             raise RuntimeError("Spout could not create an OpenGL context")
         receiver.setReceiverName(self.name)
-        self._receiver, self._size = receiver, (0, 0)
+        self._receiver, self._size, self._last_count = receiver, (0, 0), -1
+        self._buffer = None
 
     def receive(self, timeout: float) -> InputFrame | None:
         assert self._receiver is not None
@@ -54,7 +57,9 @@ class SpoutSource:
                     return None
                 time.sleep(wait)
             width, height = self._size
-            buffer = host_buffer(width * height * 4) if width else None
+            if width and (self._buffer is None or self._buffer.numel() != width * height * 4):
+                self._buffer = host_buffer(width * height * 4)  # reused until handed out as a frame
+            buffer = self._buffer if width else None
             received = receiver.receiveImage(None if buffer is None else buffer.numpy(), GL_RGBA, False, 0)
             if receiver.isUpdated():  # connected, or the sender changed size: receive again at the new size
                 self._size = (receiver.getSenderWidth(), receiver.getSenderHeight())
@@ -63,6 +68,7 @@ class SpoutSource:
             if received and buffer is not None and self._is_new(receiver):
                 if self._settled:
                     self._next_copy = time.monotonic() + _MIN_INTERVAL
+                    self._buffer = None
                     return InputFrame(buffer, width, height, PixelFormat.RGBA)
                 self._settled = True
             if time.monotonic() >= deadline:
