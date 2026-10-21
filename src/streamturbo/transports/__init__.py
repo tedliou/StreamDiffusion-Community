@@ -33,6 +33,29 @@ class Sink(Protocol):
     def close(self) -> None: ...
 
 
+class Transports(Protocol):
+    """Opens the Source and Sink that Settings name, and lists what is visible: the Runtime's view of the network."""
+
+    def source(self, settings: SourceSettings) -> Source | None: ...
+
+    def sink(self, settings: SinkSettings) -> Sink: ...
+
+    def list_senders(self, transport: str) -> list[str]: ...
+
+
+class SystemTransports:
+    """NDI and Spout."""
+
+    def source(self, settings: SourceSettings) -> Source | None:
+        return create_source(settings)
+
+    def sink(self, settings: SinkSettings) -> Sink:
+        return create_sink(settings)
+
+    def list_senders(self, transport: str) -> list[str]:
+        return list_senders(transport)
+
+
 def create_source(settings: SourceSettings) -> Source | None:
     if settings.transport == "ndi":
         from streamturbo.transports.ndi import NdiSource

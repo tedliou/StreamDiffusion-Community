@@ -59,15 +59,14 @@ def _run(settings) -> int:
     from streamturbo.backends.pytorch import PyTorchBackend
     from streamturbo.model_spec import SD_TURBO
     from streamturbo.runtime import Runtime
-    from streamturbo.transports import create_sink, create_source
+    from streamturbo.transports import SystemTransports
 
     print("Loading sd-turbo ...")
     backend = PyTorchBackend(*weights.fetch_all(SD_TURBO))
-    source, sink = create_source(settings.source), create_sink(settings.sink)
     src, dst = settings.source, settings.sink
     print(f"Source: {src.transport} {src.name or '(first visible)'}  ->  Sink: {dst.transport} {dst.name}")
     print("Running. Press Ctrl+C to stop.")
-    with Runtime(settings, backend, source, sink) as runtime:
+    with Runtime(settings, backend, SystemTransports()) as runtime:
         try:
             while True:
                 time.sleep(1)
