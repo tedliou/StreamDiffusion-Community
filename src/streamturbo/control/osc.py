@@ -7,6 +7,7 @@ Out: every Setting at its own address whenever Settings change (from any Control
      `/streamturbo/status/<field>` a few times a second, and `/streamturbo/error "message"` for a rejected message.
 """
 
+import logging
 import threading
 from typing import Any
 
@@ -14,12 +15,12 @@ from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import ThreadingOSCUDPServer
 from pythonosc.udp_client import SimpleUDPClient
 
-from streamturbo.control import Control
-from streamturbo.control.web import error_text
+from streamturbo.control import Control, error_text
 from streamturbo.settings import nested
 
 PREFIX = "/streamturbo/"
 STATUS_INTERVAL = 0.5
+log = logging.getLogger(__name__)
 STATUS_FIELDS = ("source_state", "throughput_fps", "generation_ms_p50", "settings_version", "error")
 
 
@@ -89,10 +90,13 @@ class OscServer:
 
     def _push_status(self) -> None:
         while not self._stop.wait(STATUS_INTERVAL):
-            status = self._control.status()
-            for field in STATUS_FIELDS:
-                value = status[field]
-                self._client.send_message(f"{PREFIX}status/{field}", "" if value is None else value)
+            try:
+                status = self._control.status()
+                for field in STATUS_FIELDS:
+                    value = status[field]
+                    self._client.send_message(f"{PREFIX}status/{field}", "" if value is None else value)
+            except Exception:  # an unreachable reply host or a failed sample; keep reporting
+                log.exception("could not send the status over OSC")
 
 
 def _one(args: tuple[Any, ...]) -> Any:

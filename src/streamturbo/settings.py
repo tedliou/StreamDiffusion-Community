@@ -71,10 +71,6 @@ class Settings(_Model):
         """These Settings with a partial, possibly nested, update applied and validated."""
         return self.model_validate(_deep_merge(self.model_dump(), changes))
 
-    def leaves(self) -> dict[str, Any]:
-        """Every leaf value by its dotted path, e.g. `generation.width`."""
-        return _flatten(self.model_dump())
-
 
 def _deep_merge(base: dict[str, Any], changes: Mapping[str, Any]) -> dict[str, Any]:
     merged = dict(base)
@@ -84,16 +80,6 @@ def _deep_merge(base: dict[str, Any], changes: Mapping[str, Any]) -> dict[str, A
         else:
             merged[key] = value
     return merged
-
-
-def _flatten(values: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    flat: dict[str, Any] = {}
-    for key, value in values.items():
-        if isinstance(value, dict):
-            flat |= _flatten(value, f"{prefix}{key}.")  # pyright: ignore[reportArgumentType]
-        else:
-            flat[f"{prefix}{key}"] = value
-    return flat
 
 
 def nested(path: str, value: Any) -> dict[str, Any]:

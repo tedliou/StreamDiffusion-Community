@@ -140,13 +140,6 @@ class Runtime:
             self._pending = (current.merged({**(changes or {}), **fields}), version + 1)
             return version + 1
 
-    def replace(self, settings: Settings) -> int:
-        """Submit a whole new Settings snapshot; returns its version."""
-        with self._lock:
-            version = (self._pending or (self._settings, self._settings_version))[1] + 1
-            self._pending = (settings, version)
-            return version
-
     def settings(self) -> tuple[Settings, int]:
         """The latest submitted Settings and their version: what every Control Surface should show."""
         with self._lock:

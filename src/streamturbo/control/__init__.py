@@ -3,7 +3,9 @@
 Surfaces never touch the pipeline. They call Control, and Control tells every subscriber about each change.
 """
 
+import contextlib
 import io
+import logging
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
@@ -12,6 +14,7 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+from pydantic import ValidationError
 
 from streamturbo import imageops
 from streamturbo.frames import InputFrame, OutputFrame
@@ -21,6 +24,7 @@ from streamturbo.settings import describe
 from streamturbo.transports import Transports
 
 Listener = Callable[[str, dict[str, Any]], None]
+log = logging.getLogger(__name__)
 
 PREVIEW_WIDTH = 480
 
@@ -39,12 +43,19 @@ class Control:
         self._last_settings = last_settings
         self._listeners: list[Listener] = []
         self._lock = threading.Lock()  # serialises changes, so events go out in version order
+        self._listeners_lock = threading.Lock()
         self._gpu = GpuMonitor()
 
     def subscribe(self, listener: Listener) -> Callable[[], None]:
         """Call `listener(kind, payload)` after every change; returns the unsubscribe function."""
-        self._listeners.append(listener)
-        return lambda: self._listeners.remove(listener)
+        with self._listeners_lock:
+            self._listeners.append(listener)
+
+        def unsubscribe() -> None:
+            with self._listeners_lock, contextlib.suppress(ValueError):
+                self._listeners.remove(listener)
+
+        return unsubscribe
 
     def schema(self) -> list[dict[str, Any]]:
         return describe()
@@ -99,13 +110,30 @@ class Control:
 
     def _changed(self) -> None:
         settings, version = self._runtime.settings()
-        if self._last_settings is not None:
-            save_last(self._last_settings, settings)
         self._emit("settings", {"settings": settings.model_dump(), "version": version})
+        if self._last_settings is not None:
+            try:
+                save_last(self._last_settings, settings)
+            except OSError:  # the change is live either way; it just won't be restored on the next launch
+                log.exception("could not save the last-used Settings")
 
     def _emit(self, kind: str, payload: dict[str, Any]) -> None:
-        for listener in list(self._listeners):
-            listener(kind, payload)
+        with self._listeners_lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
+            try:
+                listener(kind, payload)
+            except Exception:  # one Control Surface failing must not fail the change or starve the others
+                log.exception("a Control Surface failed to receive a %s event", kind)
+
+
+def error_text(error: BaseException) -> str:
+    """A short, readable message, e.g. `strength: Input should be less than or equal to 1`."""
+    if isinstance(error, ValidationError):
+        return "; ".join(f"{'.'.join(map(str, e['loc'])) or 'settings'}: {e['msg']}" for e in error.errors())
+    if isinstance(error, KeyError):
+        return f"missing field {error}"
+    return str(error)
 
 
 def _jpeg(frame: InputFrame | OutputFrame | None) -> bytes | None:

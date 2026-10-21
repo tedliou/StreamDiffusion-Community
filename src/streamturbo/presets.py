@@ -5,6 +5,7 @@ so recalling a Preset never disconnects TouchDesigner. Bundled Presets ship with
 the user's Presets live in the project's `presets` folder.
 """
 
+import logging
 import re
 import tomllib
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from typing import Any
 import tomli_w
 
 from streamturbo.settings import Settings
+
+log = logging.getLogger(__name__)
 
 BUNDLED_DIR = Path(__file__).parent / "bundled_presets"
 CONNECTION_FIELDS = ("source", "sink")
@@ -109,9 +112,12 @@ def _match(folder: Path, name: str) -> Path | None:
 
 def load_last(path: Path) -> Settings | None:
     """The last-used Settings, or None when there are none or they no longer validate."""
+    if not path.is_file():
+        return None
     try:
         return Settings.load(path)
-    except (OSError, tomllib.TOMLDecodeError, ValueError):
+    except (OSError, tomllib.TOMLDecodeError, ValueError) as error:
+        log.warning("ignoring the last-used Settings in %s: %s", path, error)
         return None
 
 

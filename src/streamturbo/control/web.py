@@ -13,6 +13,7 @@ import contextlib
 import hmac
 import ipaddress
 import json
+import logging
 import threading
 from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
@@ -20,13 +21,14 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from aiohttp import WSMsgType, web
-from pydantic import ValidationError
 
-from streamturbo.control import Control
+from streamturbo.control import Control, error_text
 
 PANEL_DIR = Path(__file__).resolve().parent.parent / "web_panel"
 STATUS_INTERVAL = 0.25
 PREVIEW_INTERVAL = 0.2
+TOKEN_COOKIE = "streamturbo-token"
+log = logging.getLogger(__name__)
 
 
 class WebServer:
@@ -46,6 +48,7 @@ class WebServer:
         self._panel_dir = panel_dir.resolve()
         self._clients: dict[web.WebSocketResponse, bool] = {}  # socket -> wants preview frames
         self._sending: set[asyncio.Future[None]] = set()
+        self._previewing: set[web.WebSocketResponse] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stopped: asyncio.Event | None = None
         self._ready = threading.Event()
@@ -108,9 +111,19 @@ class WebServer:
     async def _guard(
         self, request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
     ) -> web.StreamResponse:
-        remote_needs_token = self._token and not _is_loopback(request.remote or "")
-        if remote_needs_token and not hmac.compare_digest(request.query.get("token", ""), self._token or ""):
-            raise web.HTTPUnauthorized(text="an access token is required")
+        # Trusted only when both the peer and the name it used are this machine: a page on another site that
+        # resolves its own name to 127.0.0.1 (DNS rebinding) reaches us from loopback, but not as localhost.
+        local = _is_loopback(request.remote or "") and _is_loopback(urlsplit(f"//{request.host}").hostname or "")
+        if not local:
+            if not self._token:
+                raise web.HTTPForbidden(text="the Web Panel only accepts this computer")
+            given = request.query.get("token") or request.cookies.get(TOKEN_COOKIE, "")
+            if not hmac.compare_digest(given, self._token):
+                raise web.HTTPUnauthorized(text="an access token is required")
+            if "token" in request.query:  # the page's own scripts, styles and socket then carry it as a cookie
+                response = await handler(request)
+                response.set_cookie(TOKEN_COOKIE, self._token, httponly=True, samesite="Strict")
+                return response
         origin = request.headers.get("Origin")
         if origin and urlsplit(origin).netloc != request.host:
             raise web.HTTPForbidden(text="cross-origin requests are not allowed")  # another site in the browser
@@ -144,7 +157,10 @@ class WebServer:
     async def _handle(self, socket: web.WebSocketResponse, text: str) -> None:
         request: dict[str, Any] = {}
         try:
-            request = json.loads(text)
+            parsed = json.loads(text)
+            if not isinstance(parsed, dict):
+                raise ValueError("a message must be a JSON object")
+            request = parsed
             data = await self._dispatch(socket, request)
             reply = {"type": "result", "id": request.get("id"), "ok": True} | (data or {})
         except (ValueError, KeyError, TypeError, OSError) as error:
@@ -193,19 +209,33 @@ class WebServer:
     async def _push_status(self) -> None:
         while True:
             if self._clients:
-                self._broadcast({"type": "status"} | await self._call(self._control.status))
+                try:
+                    self._broadcast({"type": "status"} | await self._call(self._control.status))
+                except Exception:  # keep pushing; the next sample may succeed
+                    log.exception("could not read the Runtime status")
             await asyncio.sleep(STATUS_INTERVAL)
 
     async def _push_previews(self) -> None:
         while True:
             if any(self._clients.values()):
-                for channel, jpeg in enumerate(await self._call(self._control.previews)):
-                    if jpeg is None:
-                        continue
-                    for socket, wanted in list(self._clients.items()):
-                        if wanted:
-                            self._spawn(_send(socket, bytes([channel]) + jpeg))
+                try:
+                    previews: tuple[bytes | None, bytes | None] = await self._call(self._control.previews)
+                except Exception:
+                    log.exception("could not make the previews")
+                    previews = (None, None)
+                for socket, wanted in list(self._clients.items()):
+                    if wanted and socket not in self._previewing:  # a slow client skips previews, never queues them
+                        frames = [bytes([channel]) + jpeg for channel, jpeg in enumerate(previews) if jpeg]
+                        self._previewing.add(socket)
+                        self._spawn(self._send_previews(socket, frames))
             await asyncio.sleep(PREVIEW_INTERVAL)
+
+    async def _send_previews(self, socket: web.WebSocketResponse, frames: list[bytes]) -> None:
+        try:
+            for frame in frames:
+                await _send(socket, frame)
+        finally:
+            self._previewing.discard(socket)
 
 
 async def _send(socket: web.WebSocketResponse, data: str | bytes) -> None:
@@ -222,12 +252,3 @@ def _is_loopback(host: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
-
-
-def error_text(error: BaseException) -> str:
-    """A short, readable message, e.g. `strength: Input should be less than or equal to 1`."""
-    if isinstance(error, ValidationError):
-        return "; ".join(f"{'.'.join(map(str, e['loc'])) or 'settings'}: {e['msg']}" for e in error.errors())
-    if isinstance(error, KeyError):
-        return f"missing field {error}"
-    return str(error)

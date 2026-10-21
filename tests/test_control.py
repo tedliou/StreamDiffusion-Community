@@ -2,10 +2,14 @@
 
 import json
 import queue
+import socket
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
+from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +99,7 @@ class Rig:
     osc_in: OscListener
     presets_dir: Path
     last_path: Path
+    web_control: Control
 
     def panel(self, **options: Any) -> Panel:
         return Panel(f"ws://127.0.0.1:{self.web.port}/ws", **options)
@@ -117,7 +122,7 @@ def rig(small_settings: Settings, net: MemoryTransports, tmp_path: Path) -> Iter
         web.start()
         osc.start()
         try:
-            yield Rig(runtime, sink, web, osc, osc_in, presets_dir, last_path)
+            yield Rig(runtime, sink, web, osc, osc_in, presets_dir, last_path, control)
         finally:
             osc.stop()
             web.stop()
@@ -283,3 +288,45 @@ def test_other_sites_cannot_use_the_control_api(rig: Rig):
 def test_lan_access_needs_a_token(rig: Rig):
     with pytest.raises(ValueError, match="token"):
         WebServer(Control.__new__(Control), host="0.0.0.0", port=0)
+
+
+def test_a_page_reaching_the_panel_through_another_host_name_is_refused(rig: Rig):
+    # DNS rebinding: evil.example resolves to 127.0.0.1, so the request comes from loopback but names another site
+    request = urllib.request.Request(f"http://127.0.0.1:{rig.web.port}/", headers={"Host": "evil.example"})
+    with pytest.raises(urllib.error.HTTPError, match="403"):
+        urllib.request.urlopen(request, timeout=5)
+
+
+def test_a_malformed_message_gets_an_error_and_the_connection_stays_up(rig: Rig):
+    panel = rig.panel()
+    panel.socket.send("[1, 2]")
+    assert panel.next("result")["ok"] is False
+    assert panel.request("update", changes={"seed": 7})["ok"] is True
+
+
+def test_a_failing_control_surface_does_not_undo_or_block_a_change(rig: Rig):
+    def broken(kind: str, payload: dict[str, Any]) -> None:
+        raise OSError("reply host unreachable")
+
+    rig.web_control.subscribe(broken)
+    panel = rig.panel()
+    assert panel.request("update", changes={"seed": 8})["ok"] is True
+    assert rig.osc_in.wait_for("/streamturbo/seed") == (8,)
+
+
+def test_a_tablet_with_the_token_loads_the_whole_panel(rig: Rig):
+    address = socket.gethostbyname(socket.gethostname())
+    if address.startswith("127."):
+        pytest.skip("this machine has no LAN address")
+    web = WebServer(rig.web_control, host="0.0.0.0", port=0, token="secret")
+    web.start()
+    try:
+        base = f"http://{address}:{web.port}"
+        with pytest.raises(urllib.error.HTTPError, match="401"):
+            urllib.request.urlopen(f"{base}/", timeout=5)
+        tablet = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+        page = tablet.open(f"{base}/?token=secret", timeout=5).read().decode()
+        script = page.split('src="./', 1)[1].split('"', 1)[0]  # the page's own script, requested without ?token
+        assert tablet.open(f"{base}/{script}", timeout=5).status == 200
+    finally:
+        web.stop()
