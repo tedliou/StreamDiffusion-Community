@@ -372,6 +372,9 @@ class Runtime:
             image, strength, gen.width, gen.height, settings.temporal_smoothing, settings.temporal_coherence
         )
         out, fmt = settings.output, self._sink_format
+        if settings.upscaler and (out.width > gen.width or out.height > gen.height):
+            # Resized while still in the Backend's precision: a 4x picture in float32 would cost hundreds of MiB.
+            result = imageops.fit(self._backend.upscale(result), out.width, out.height, "stretch")
         packed = imageops.to_bytes((result.float() + 1) / 2, out.width, out.height, fmt)
         host = host_buffer(packed.numel())
         host.copy_(packed, non_blocking=True)

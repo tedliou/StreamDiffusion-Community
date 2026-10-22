@@ -24,6 +24,10 @@ export const settingText: Record<string, { label: string; help?: string; unit?: 
     label: "Temporal Coherence",
     help: "Each Generation also looks at the previous one, so detail stays in place instead of shimmering. Costs a few percent of Generation Time and keeps the picture sharp; combines with Temporal Smoothing.",
   },
+  upscaler: {
+    label: "Upscaler",
+    help: "Enlarges Output Frames bigger than the Generation Resolution with a small AI model that adds edges and texture, instead of plain resizing. Costs about 15 ms per frame at 512×512 with TensorRT; set the Output Resolution to 2× or 4× the Generation Resolution.",
+  },
   seed: { label: "Seed", help: "Fixes the noise. Changing Strength never re-rolls it." },
   "source.transport": { label: "Transport" },
   "source.name": { label: "Name", help: "Leave empty to use the first visible sender." },

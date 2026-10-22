@@ -163,3 +163,14 @@ def test_the_temporal_coherence_switch_follows_every_control_surface(
     other.get_by_role("switch", name="Temporal Coherence").click()
     expect(switch).to_be_checked()
     other.close()
+
+
+def test_the_upscaler_switch_sits_with_the_output_resolution(page: Page, served: tuple[Runtime, MemorySink, str]):
+    runtime = served[0]
+    switch = page.get_by_role("switch", name="Upscaler")
+    expect(switch).not_to_be_checked()  # the test Settings turn it off
+    expect(page.get_by_role("group", name="Output")).to_contain_text("Upscaler")
+
+    switch.click()
+    wait_until(lambda: runtime.settings()[0].upscaler is True)
+    expect(switch).to_be_checked()

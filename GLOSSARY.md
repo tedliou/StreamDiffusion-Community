@@ -35,7 +35,11 @@ The pixel size the model actually works at, always a multiple of 64 on each side
 _Avoid_: Model resolution, internal resolution
 
 **Output Resolution**:
-The pixel size of Output Frames after upscaling from the Generation Resolution.
+The pixel size of Output Frames: reached from the Generation Resolution through the Upscaler when it is on and the Output Resolution is larger, otherwise by plain resizing.
+
+**Upscaler**:
+The learned model that enlarges a generated picture with new detail on its way to the Output Resolution. It always enlarges 4x; the picture is then resized to the Output Resolution.
+_Avoid_: Super resolution, ESRGAN, SR
 
 **Fit Mode**:
 How an Input Frame whose aspect ratio differs from the Generation Resolution is mapped onto it: fill (crop), fit (letterbox) or stretch.

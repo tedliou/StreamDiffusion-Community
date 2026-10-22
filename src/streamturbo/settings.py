@@ -89,6 +89,8 @@ class Settings(_Model):
     temporal_smoothing: float = _setting("live", 0.2, ge=0.0, le=0.95)  # 0.2: no visible trail behind a fast pan
     # Each Generation also attends to the previous one's features, so detail stays in place between Output Frames.
     temporal_coherence: bool = _setting("live", True)
+    # Output Frames larger than the Generation Resolution are enlarged by the Upscaler instead of plain resizing.
+    upscaler: bool = _setting("live", True)
     similar_frame_skip: SimilarFrameSkip = SimilarFrameSkip()
     backend: BackendChoice = _setting("rebuild", "auto")
 

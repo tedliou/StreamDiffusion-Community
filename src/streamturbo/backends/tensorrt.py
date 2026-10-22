@@ -533,6 +533,9 @@ class TensorRTBackend:
     def decode(self, latents: torch.Tensor) -> torch.Tensor:
         return self._decoder(latents=latents)
 
+    def upscale(self, image: torch.Tensor) -> torch.Tensor:
+        return self._pytorch.upscale(image)  # the PyTorch Upscaler until it has an Engine (#21)
+
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
         return self.coherent_unet(latents, timestep, prompt_embeds, None)[0]
 

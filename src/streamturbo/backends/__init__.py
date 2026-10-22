@@ -36,6 +36,10 @@ class Backend(Protocol):
         """Predicted noise (epsilon) for latents at timestep."""
         ...
 
+    def upscale(self, image: torch.Tensor) -> torch.Tensor:
+        """The Upscaler: (1, 3, H, W) in [-1, 1] -> (1, 3, 4H, 4W) in [-1, 1]."""
+        ...
+
 
 Features = object  # a Backend's own record of one Generation's self-attention keys and values, opaque to others
 
@@ -140,6 +144,9 @@ class BestBackend:
 
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
         return self._active.unet(latents, timestep, prompt_embeds)
+
+    def upscale(self, image: torch.Tensor) -> torch.Tensor:
+        return self._active.upscale(image)
 
     def coherent_unet(
         self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, previous: Features | None

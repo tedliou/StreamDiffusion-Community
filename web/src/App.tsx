@@ -22,7 +22,7 @@ const GROUPS: { key: keyof typeof groupText; paths: string[] }[] = [
   { key: "source", paths: ["source.transport", "source.name"] },
   { key: "sink", paths: ["sink.transport", "sink.name", "sink.fps"] },
   { key: "resolution", paths: ["generation.width", "generation.height", "fit_mode"] },
-  { key: "output", paths: ["output.width", "output.height"] },
+  { key: "output", paths: ["output.width", "output.height", "upscaler"] },
   { key: "performance", paths: ["similar_frame_skip.threshold", "similar_frame_skip.max_skips", "backend"] },
 ];
 

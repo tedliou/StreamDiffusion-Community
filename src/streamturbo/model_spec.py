@@ -11,6 +11,15 @@ class Weights:
 
 
 @dataclass(frozen=True)
+class PinnedFile:
+    """A single weights file outside Hugging Face, checked against its SHA-256 before use."""
+
+    url: str
+    sha256: str
+    name: str
+
+
+@dataclass(frozen=True)
 class ModelSpec:
     name: str
     model: Weights
@@ -40,6 +49,13 @@ SD_TURBO = ModelSpec(
         revision="614f76814bbe30edbe2e627ace1c2234c81a2c0e",
         files=("config.json", "diffusion_pytorch_model.safetensors"),
     ),
+)
+
+# The Upscaler: Real-ESRGAN realesr-animevideov3, BSD-3-Clause (spec #19).
+UPSCALER = PinnedFile(
+    url="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
+    sha256="b8a8376811077954d82ca3fcf476f1ac3da3e8a68a4f4d71363008000a18b75d",
+    name="realesr-animevideov3.pth",
 )
 
 # The Glass Preset: the default Settings (spec #2).
