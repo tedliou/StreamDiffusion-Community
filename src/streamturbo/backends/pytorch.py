@@ -12,8 +12,8 @@ KeysValues = dict[str, tuple[torch.Tensor, torch.Tensor]]  # per self-attention 
 HIGHEST_RESOLUTION = ("down_blocks.0.", "up_blocks.3.")
 
 
-class _Bank:
-    """What the banked self-attention layers share during one UNet call."""
+class _Recorder:
+    """What the coherent self-attention layers share during one Temporal Coherence call."""
 
     def __init__(self) -> None:
         self.recording = False
@@ -21,24 +21,24 @@ class _Bank:
         self.current: KeysValues = {}
 
 
-class _BankedSelfAttention:
+class _CoherentSelfAttention:
     """Self-attention that also attends to the previous Generation's keys and values (Temporal Coherence).
 
     Reimplemented from the StreamV2V paper's extended self-attention (arXiv 2405.15757), keeping one frame.
     Outside a Temporal Coherence call it is the layer's own processor, so exports and plain calls are unchanged.
     """
 
-    def __init__(self, name: str, own: Any, bank: _Bank) -> None:
-        self._name, self._own, self._bank = name, own, bank
+    def __init__(self, name: str, own: Any, recorder: _Recorder) -> None:
+        self._name, self._own, self._recorder = name, own, recorder
 
     def __call__(self, attn: Any, hidden_states: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
-        bank = self._bank
-        if not bank.recording:
+        recorder = self._recorder
+        if not recorder.recording:
             return self._own(attn, hidden_states, *args, **kwargs)
         batch = hidden_states.shape[0]
         query, key, value = attn.to_q(hidden_states), attn.to_k(hidden_states), attn.to_v(hidden_states)
-        bank.current[self._name] = (key, value)
-        previous = bank.previous.get(self._name)
+        recorder.current[self._name] = (key, value)
+        previous = recorder.previous.get(self._name)
         if previous is not None and previous[0].shape == key.shape:
             key, value = torch.cat((key, previous[0]), dim=1), torch.cat((value, previous[1]), dim=1)
         head_dim = query.shape[-1] // attn.heads
@@ -70,7 +70,7 @@ class PyTorchBackend:
             .eval()
         )
         self._model_dir = model_dir
-        self._bank = _Bank()
+        self._recorder = _Recorder()
         self._unet: torch.nn.Module | None = self._load_unet()
         self._vae = AutoencoderTiny.from_pretrained(tiny_vae_dir, torch_dtype=self.dtype)
         self._vae = self._vae.to(self.device).eval()  # pyright: ignore[reportArgumentType]
@@ -87,10 +87,11 @@ class PyTorchBackend:
         for name, own in processors.items():
             if name.endswith(".attn1.processor") and not name.startswith(HIGHEST_RESOLUTION):
                 attn = unet.get_submodule(name.removesuffix(".processor"))
-                # The banked call is plain self-attention: none of the extras a processor may have to apply.
-                assert attn.group_norm is None and attn.spatial_norm is None and not attn.residual_connection
-                assert attn.rescale_output_factor == 1 and attn.norm_q is None, name
-                processors[name] = _BankedSelfAttention(name, own, self._bank)
+                # The coherent call is plain self-attention: none of the extras a processor may have to apply.
+                plain = attn.group_norm is None and attn.spatial_norm is None and attn.norm_q is None
+                if not plain or attn.residual_connection or attn.rescale_output_factor != 1:
+                    raise RuntimeError(f"{name} is not plain self-attention; Temporal Coherence cannot extend it")
+                processors[name] = _CoherentSelfAttention(name, own, self._recorder)
         unet.set_attn_processor(processors)
         return unet.to(self.device, memory_format=torch.channels_last).eval()  # pyright: ignore[reportArgumentType]
 
@@ -131,10 +132,10 @@ class PyTorchBackend:
 
     @torch.inference_mode()
     def coherent_unet(
-        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, bank: object | None
+        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, previous: object | None
     ) -> tuple[torch.Tensor, KeysValues]:
-        state = self._bank
-        state.recording, state.previous, state.current = True, bank if isinstance(bank, dict) else {}, {}
+        state = self._recorder
+        state.recording, state.previous, state.current = True, previous if isinstance(previous, dict) else {}, {}
         try:
             eps = self.unet(latents, timestep, prompt_embeds)
         finally:

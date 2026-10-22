@@ -55,12 +55,13 @@ class FakeBackend:
         return torch.full_like(latents, -prompt_embeds.mean().item())  # predicting less noise brightens
 
     def coherent_unet(
-        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, bank: object | None
+        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, previous: object | None
     ) -> tuple[torch.Tensor, object]:
-        """Temporal Coherence: with a bank (the previous noisy latents), the prediction leans halfway towards it."""
+        """Temporal Coherence: given the last call's features (its noisy latents), the prediction leans halfway
+        towards them."""
         eps = self.unet(latents, timestep, prompt_embeds)
-        if isinstance(bank, torch.Tensor) and bank.shape == latents.shape:
-            eps = eps + (latents - bank) / 2
+        if isinstance(previous, torch.Tensor) and previous.shape == latents.shape:
+            eps = eps + (latents - previous) / 2
         return eps, latents
 
 

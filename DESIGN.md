@@ -130,6 +130,12 @@ components:
     backgroundColor: "{colors.slider-fill}"
     rounded: "{rounded.full}"
     size: 16px
+  switch:
+    backgroundColor: "{colors.slider-track}"
+    checkedBackgroundColor: "{colors.slider-fill}"
+    rounded: "{rounded.full}"
+    width: 40px
+    height: 24px
 ---
 
 # StreamTurbo Web Panel
@@ -191,6 +197,8 @@ the slider thumb and status dots.
   it. Live Settings follow the thumb (throttled to 10 updates a second); Reset Settings apply on release so output
   pauses once. Arrow keys step, Home and End jump to the limits.
 - **Segmented control:** native radio buttons for enumerations (Transport, Fit Mode).
+- **Switch:** a native checkbox with the switch role for on/off Settings (Temporal Coherence): the slider track's
+  colour when off, the slider fill's when on, with a surface-coloured knob. The knob moves without a transition.
 - **Class badge:** Live (info), Reset (warning), Rebuild (error), with the class's meaning as its tooltip.
 - **Preset row:** name, a Bundled tag for read-only Presets, Recall, Rename… and a two-step Delete that turns into
   Confirm Delete for four seconds.

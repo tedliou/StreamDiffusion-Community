@@ -479,3 +479,40 @@ def test_turning_temporal_coherence_off_applies_to_the_next_output_frame(small_s
         after = sink.wait_for(lambda f: f.settings_version == version)
 
     assert torch.equal(after.data, first_output(settings, RED).data)
+
+
+def test_temporal_coherence_starts_afresh_on_another_generation_resolution(small_settings, net):
+    settings = small_settings.merged({"strength": 0.5, "temporal_coherence": True})
+    source, sink = net.add_source("cam"), net.sink(settings.sink)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        for seq in range(3):
+            source.push(input_frame(solid(320, 240, BLUE)))
+            sink.wait_for(lambda f, seq=seq: f.input_seq == seq)
+        version = runtime.update(generation={"width": 320, "height": 256})
+        time.sleep(0.1)
+        source.push(input_frame(solid(320, 240, RED)))
+        resized = sink.wait_for(lambda f: f.settings_version == version)
+
+    assert torch.equal(
+        resized.data, first_output(settings.merged({"generation": {"width": 320, "height": 256}}), RED).data
+    )
+
+
+def test_temporal_coherence_leans_on_nothing_after_strength_zero(small_settings, net):
+    """At Strength 0 the UNet does not run, so there is nothing current to lean on afterwards."""
+    settings = small_settings.merged({"strength": 0.5, "temporal_coherence": True})
+    source, sink = net.add_source("cam"), net.sink(settings.sink)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        for seq in range(3):
+            source.push(input_frame(solid(320, 240, BLUE)))
+            sink.wait_for(lambda f, seq=seq: f.input_seq == seq)
+        runtime.update(strength=0.0)
+        time.sleep(0.1)
+        source.push(input_frame(solid(320, 240, RED)))
+        sink.wait_for(lambda f: f.input_seq == 3)
+        version = runtime.update(strength=0.5)
+        time.sleep(0.1)
+        source.push(input_frame(solid(320, 240, RED)))
+        after = sink.wait_for(lambda f: f.settings_version == version)
+
+    assert torch.equal(after.data, first_output(settings, RED).data)

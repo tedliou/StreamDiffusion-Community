@@ -385,3 +385,14 @@ def test_settings_and_presets_saved_before_temporal_coherence_load_with_it_on(tm
     older.write_text("strength = 0.5\ntemporal_smoothing = 0.2\n", encoding="utf-8")
 
     assert Settings.load(older).temporal_coherence is True
+
+
+def test_a_preset_keeps_temporal_coherence(rig: Rig):
+    panel = rig.panel()
+    panel.request("update", changes={"temporal_coherence": False})
+    assert panel.request("preset.save", name="Steady off")["ok"]
+    panel.request("update", changes={"temporal_coherence": True})
+    assert panel.request("preset.recall", name="Steady off")["ok"]
+
+    wait_until(lambda: rig.runtime.settings()[0].temporal_coherence is False)
+    panel.close()

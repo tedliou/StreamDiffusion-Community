@@ -37,7 +37,7 @@ class Backend(Protocol):
         ...
 
 
-Bank = object  # a Backend's own record of one Generation's self-attention features, opaque to everyone else
+Features = object  # a Backend's own record of one Generation's self-attention keys and values, opaque to others
 
 
 @runtime_checkable
@@ -45,9 +45,9 @@ class CoherentUnet(Protocol):
     """A Backend that can run the UNet with Temporal Coherence."""
 
     def coherent_unet(
-        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, bank: Bank | None
-    ) -> tuple[torch.Tensor, Bank]:
-        """Like `unet`, with self-attention also attending to `bank`, the previous call's features (none: a plain
+        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, previous: Features | None
+    ) -> tuple[torch.Tensor, Features]:
+        """Like `unet`, with self-attention also attending to `previous`, the last call's features (none: a plain
         Generation). Returns the predicted noise and this call's features, for the next call."""
         ...
 
@@ -142,13 +142,21 @@ class BestBackend:
         return self._active.unet(latents, timestep, prompt_embeds)
 
     def coherent_unet(
-        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, bank: Bank | None
-    ) -> tuple[torch.Tensor, Bank]:
-        """Temporal Coherence where the active Backend has it. A bank only goes back to the Backend that made it,
+        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, previous: Features | None
+    ) -> tuple[torch.Tensor, Features]:
+        """Temporal Coherence where the active Backend has it. Features only go back to the Backend that made them,
         so a switch costs one plain Generation."""
         active = self._active
         if not isinstance(active, CoherentUnet):
             return active.unet(latents, timestep, prompt_embeds), None
-        maker, inner = bank if isinstance(bank, tuple) else (None, None)
-        eps, made = active.coherent_unet(latents, timestep, prompt_embeds, inner if maker is active else None)
-        return eps, (active, made)
+        mine = previous.features if isinstance(previous, _Made) and previous.backend is active else None
+        eps, features = active.coherent_unet(latents, timestep, prompt_embeds, mine)
+        return eps, _Made(active, features)
+
+
+@dataclass(frozen=True)
+class _Made:
+    """Features with the Backend that made them."""
+
+    backend: Backend
+    features: Features

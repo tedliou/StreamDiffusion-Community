@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 
 import torch
 
-from streamturbo.backends import Backend, Bank, CoherentUnet
+from streamturbo.backends import Backend, CoherentUnet, Features
 
 MAX_TIMESTEP = 999
 
@@ -62,7 +62,8 @@ class GenerationCore:
         self._seed: int | None = None
         self._latent_noise: torch.Tensor | None = None
         self._previous: torch.Tensor | None = None  # the last Generation's latents, for Temporal Smoothing
-        self._bank: Bank | None = None  # the last Generation's self-attention features, for Temporal Coherence
+        self._features: Features | None = None  # the last Generation's self-attention keys and values, for
+        # Temporal Coherence
 
     @torch.inference_mode()
     def set_prompts(self, prompts: Sequence[tuple[str, float]], transition: float = 0.0) -> None:
@@ -101,7 +102,7 @@ class GenerationCore:
 
     def forget_previous(self) -> None:
         """Start Temporal Smoothing and Temporal Coherence afresh: the next Generation leans on nothing."""
-        self._previous = self._bank = None
+        self._previous = self._features = None
 
     @torch.inference_mode()
     def generate(
@@ -122,7 +123,7 @@ class GenerationCore:
         if self._blend is None or self._seed is None:
             raise RuntimeError("set_prompts() and set_seed() must be called before generate()")
         if not coherence:
-            self._bank = None
+            self._features = None
         embeds = self._blend.value().to(self.backend.dtype)
         latents = self._predict_latents(image, strength, width, height, embeds, coherence)
         previous, self._previous = self._previous, latents
@@ -142,6 +143,7 @@ class GenerationCore:
         """The clean latents one UNet step predicts."""
         backend = self.backend
         if image is not None and strength <= 0:
+            self._features = None  # no UNet ran, so the last features belong to an older picture
             return backend.encode(image).float()
         noise = self._noise_for(width, height)
         t = timestep_for(1.0 if image is None else strength)
@@ -152,7 +154,7 @@ class GenerationCore:
             noisy = signal * backend.encode(image).float() + noise_level * noise
         timestep = self._timesteps[t : t + 1]
         if coherence and isinstance(backend, CoherentUnet):
-            eps, self._bank = backend.coherent_unet(noisy, timestep, prompt_embeds, self._bank)
+            eps, self._features = backend.coherent_unet(noisy, timestep, prompt_embeds, self._features)
         else:
             eps = backend.unet(noisy, timestep, prompt_embeds)
         eps = eps.float()
