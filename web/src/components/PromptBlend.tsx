@@ -10,7 +10,8 @@ export interface WeightedPrompt {
 
 type Commit = (next: unknown) => Promise<boolean>;
 
-/** The Prompt Blend: one row per weighted Prompt. Rows change by index, so edits from OSC are never overwritten. */
+/** The Prompt Blend: one row per weighted Prompt. Editing or adding a row goes by index, so it never overwrites
+ * another row changed meanwhile over OSC; removing one sends the whole list. */
 export function PromptBlend({
   id,
   field,
@@ -51,7 +52,7 @@ export function PromptBlend({
         type="button"
         className="button"
         disabled={value.length >= atMost}
-        onClick={() => void commit([...value, { text: "", weight: 0 }])}
+        onClick={() => void commitItem(value.length, { text: "", weight: 0 })}
       >
         {text.promptAdd}
       </button>

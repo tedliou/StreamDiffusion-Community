@@ -59,7 +59,6 @@ class GenerationCore:
         self._prompts: tuple[tuple[str, float], ...] = ()
         self._embeds: dict[str, torch.Tensor] = {}  # per Prompt text, for the Prompts in the current blend
         self._blend: Glide[torch.Tensor] | None = None  # the Prompt Blend's embeddings, in float32
-        self._embeds_dtype = backend.dtype
         self._seed: int | None = None
         self._latent_noise: torch.Tensor | None = None
         self._previous: torch.Tensor | None = None  # the last Generation's latents, for Temporal Smoothing
@@ -84,7 +83,7 @@ class GenerationCore:
         target = torch.zeros_like(first, dtype=torch.float32)
         for text, weight in prompts:
             target += self._embeds[text].float() * (weight / total)
-        self._prompts, self._embeds_dtype = prompts, first.dtype
+        self._prompts = prompts
         if self._blend is None:
             self._blend = Glide(target)
         else:
@@ -114,13 +113,13 @@ class GenerationCore:
         """
         if self._blend is None or self._seed is None:
             raise RuntimeError("set_prompts() and set_seed() must be called before generate()")
-        latents = self._denoise(image, strength, width, height, self._blend.value().to(self._embeds_dtype))
+        latents = self._predict_latents(image, strength, width, height, self._blend.value().to(self.backend.dtype))
         previous, self._previous = self._previous, latents
         if smoothing > 0 and previous is not None and previous.shape == latents.shape:
             latents = self._previous = torch.lerp(latents, previous, smoothing)
         return self.backend.decode(latents)
 
-    def _denoise(
+    def _predict_latents(
         self, image: torch.Tensor | None, strength: float, width: int, height: int, prompt_embeds: torch.Tensor
     ) -> torch.Tensor:
         """The clean latents one UNet step predicts."""

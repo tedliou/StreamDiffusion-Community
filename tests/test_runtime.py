@@ -361,6 +361,21 @@ def test_prompt_change_transitions_over_the_set_duration(shaded):
     assert abs(seen[-1] - light) < 1
 
 
+def test_a_change_during_a_transition_carries_on_from_where_the_blend_is(shaded):
+    runtime, sink = shaded
+    output_after(runtime, sink, prompts=blend(("dark", 1)))
+    output_after(runtime, sink, prompt_transition=0.6)
+    towards_light = runtime.update(prompts=blend(("light", 1)))
+    time.sleep(0.3)
+    back = runtime.update(prompts=blend(("dark", 1)))
+    sink.wait_for(lambda f: f.settings_version == back)
+    time.sleep(0.2)
+    frames = [f for f in list(sink.frames) if f.settings_version in (towards_light, back)]
+
+    steps = [abs(brightness(a) - brightness(b)) for a, b in itertools.pairwise(frames)]
+    assert max(steps) < 5  # no jump when the target changes halfway
+
+
 def test_a_single_prompt_is_still_accepted(small_settings, net):
     runtime = Runtime(small_settings, FakeBackend(), net)
     runtime.update(prompt="ice")
@@ -372,7 +387,8 @@ def test_prompts_are_changed_by_index_or_replaced_from_json(small_settings, net)
     runtime = Runtime(small_settings.merged({"prompts": blend(("ice", 1))}), FakeBackend(), net)
     runtime.update({"prompts": {"1": {"text": "fire"}}})  # the next index adds a Prompt, weight 1
     runtime.update({"prompts": {"0": {"weight": 0.5}}})
-    assert [p.model_dump() for p in runtime.settings()[0].prompts] == blend(("ice", 0.5), ("fire", 1.0))
+    runtime.update({"prompts": {"2": {"weight": 0.25}}})  # a Prompt added by its weight starts empty
+    assert [p.model_dump() for p in runtime.settings()[0].prompts] == blend(("ice", 0.5), ("fire", 1.0), ("", 0.25))
 
     runtime.update(prompts='[{"text": "smoke", "weight": 2}]')
     assert [p.model_dump() for p in runtime.settings()[0].prompts] == blend(("smoke", 2.0))

@@ -18,7 +18,7 @@ export const settingText: Record<string, { label: string; help?: string; unit?: 
   },
   temporal_smoothing: {
     label: "Temporal Smoothing",
-    help: "How much of the previous Output Frame each new one keeps, to reduce flicker. 0 turns it off; high values trail behind fast motion.",
+    help: "How much of the previous Generation each new one keeps, to reduce flicker. 0 turns it off; high values trail behind fast motion.",
   },
   seed: { label: "Seed", help: "Fixes the noise. Changing Strength never re-rolls it." },
   "source.transport": { label: "Transport" },

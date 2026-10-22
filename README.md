@@ -168,7 +168,7 @@ StreamTurbo 在 7000 埠接收 OSC，並把變更和狀態回報到 127.0.0.1:70
 |---|---|---|
 | 收 | `/streamturbo/strength`、`/streamturbo/seed`、`/streamturbo/temporal_smoothing`、`/streamturbo/prompt_transition`…… | 一個值 |
 | 收 | `/streamturbo/prompts/0/text`、`/streamturbo/prompts/0/weight` | 依索引改 Prompt Blend 的某一項；用下一個索引（目前項數）會新增一項，權重預設 1 |
-| 收 | `/streamturbo/prompts` | 整個 Prompt Blend 的 JSON 字串，例如 `'[{"text": "ice", "weight": 1}]'`；要移除項目時用這個 |
+| 收 | `/streamturbo/prompts` | 整個 Prompt Blend 的 JSON 字串，例如 `'[{"text": "ice", "weight": 1}]'`；要移除項目時用這個（移除後 TouchDesigner 端 OSC In 裡舊的較大索引值不會自動清掉） |
 | 收 | `/streamturbo/prompt` | 一個提示詞，取代整個 Prompt Blend |
 | 收 | `/streamturbo/source/transport`、`/streamturbo/source/name`、`/streamturbo/generation/width`…… | 一個值，每個 Setting 都有 |
 | 收 | `/streamturbo/preset/recall`、`/streamturbo/preset/save` | Preset 名稱 |

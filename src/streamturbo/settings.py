@@ -9,22 +9,24 @@ import tomllib
 import typing
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 import annotated_types
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from streamturbo.model_spec import GLASS_PROMPT, GLASS_SIZE, GLASS_STRENGTH, SD_TURBO
 
 FitMode = Literal["fill", "fit", "stretch"]
 BackendChoice = Literal["auto", "pytorch"]  # auto: TensorRT once its Engines are built, PyTorch until then
 SettingClass = Literal["live", "reset", "rebuild"]
-MAX_PROMPTS = 32  # each distinct Prompt is encoded once; this only bounds what one update can ask for
+
+
+# A float a control moves in steps of 0.01; pydantic's multiple_of would reject 0.29 over rounding error.
+Hundredths = Annotated[float, AfterValidator(lambda value: round(value, 2))]
 
 
 def _setting(kind: SettingClass, default: Any, *, step: float | None = None, **constraints: Any) -> Any:
-    """A leaf Setting. `step` is the increment a control moves in, for floats that pydantic's multiple_of would
-    reject over rounding error; the field's validator does the rounding."""
+    """A leaf Setting. `step` is the increment a control moves in, for a Hundredths field."""
     extra: dict[str, Any] = {"class": kind} | ({"step": step} if step is not None else {})
     return Field(default=default, json_schema_extra=extra, **constraints)
 
@@ -68,13 +70,8 @@ class SimilarFrameSkip(_Model):
 class WeightedPrompt(_Model):
     """One Prompt in a Prompt Blend; its weight counts relative to the total of all weights."""
 
-    text: str = _setting("live", GLASS_PROMPT, max_length=2000)
-    weight: float = _setting("live", 1.0, ge=0.0, le=10.0, step=0.01)
-
-    @field_validator("weight")
-    @classmethod
-    def _hundredths(cls, value: float) -> float:
-        return round(value, 2)
+    text: str = _setting("live", "", max_length=2000)
+    weight: Hundredths = _setting("live", 1.0, ge=0.0, le=10.0, step=0.01)
 
 
 class Settings(_Model):
@@ -83,8 +80,8 @@ class Settings(_Model):
     generation: GenerationResolution = GenerationResolution()
     output: OutputResolution = OutputResolution()
     fit_mode: FitMode = _setting("reset", "fill")
-    prompts: list[WeightedPrompt] = _setting("live", [WeightedPrompt()], min_length=1, max_length=MAX_PROMPTS)
-    strength: float = _setting("live", GLASS_STRENGTH, ge=0.0, le=1.0, step=0.01)
+    prompts: list[WeightedPrompt] = _setting("live", [WeightedPrompt(text=GLASS_PROMPT)], min_length=1)
+    strength: Hundredths = _setting("live", GLASS_STRENGTH, ge=0.0, le=1.0, step=0.01)
     strength_glide: float = _setting("live", 0.25, ge=0.0, le=10.0)  # seconds to reach a new Strength; 0 jumps
     prompt_transition: float = _setting("live", 1.0, ge=0.0, le=30.0)  # seconds to blend into a new Prompt Blend
     seed: int = _setting("live", 2, ge=0, lt=2**31)  # OSC integers are 32-bit
@@ -114,11 +111,6 @@ class Settings(_Model):
         if not any(prompt.weight > 0 for prompt in value):
             raise ValueError("at least one Prompt needs a weight above 0")
         return value
-
-    @field_validator("strength")
-    @classmethod
-    def _hundredths(cls, value: float) -> float:
-        return round(value, 2)
 
     @classmethod
     def load(cls, path: Path) -> Self:
