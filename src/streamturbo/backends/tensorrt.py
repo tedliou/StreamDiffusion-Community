@@ -269,6 +269,7 @@ def build_engine(
         profile.set_shape(name, lo, opt, hi)
     config.add_optimization_profile(profile)
     serialized = builder.build_serialized_network(network, config)
+    del parser, network  # the parser keeps the ONNX weight files open, which would stop the caller removing them
     if serialized is None:
         raise RuntimeError(f"TensorRT could not build the {component} Engine")
     engine_path.parent.mkdir(parents=True, exist_ok=True)
