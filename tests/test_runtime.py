@@ -516,3 +516,44 @@ def test_temporal_coherence_leans_on_nothing_after_strength_zero(small_settings,
         after = sink.wait_for(lambda f: f.settings_version == version)
 
     assert torch.equal(after.data, first_output(settings, RED).data)
+
+
+DIM_RED = (100, 40, 40)
+UPSCALED_DIM_RED = (164, 104, 104)  # the fake Upscaler brightens by a quarter of the range
+
+
+def upscaler_output(settings, upscaler: bool, colour: tuple[int, int, int] = DIM_RED):
+    return first_output(settings.merged({"strength": 0.0, "upscaler": upscaler}), colour)
+
+
+def test_the_upscaler_enlarges_output_frames_above_the_generation_resolution(small_settings):
+    on, off = upscaler_output(small_settings, True), upscaler_output(small_settings, False)
+
+    assert (on.width, on.height) == (off.width, off.height) == (320, 240)
+    assert close_to(on, UPSCALED_DIM_RED)
+    assert close_to(off, DIM_RED)
+
+
+@pytest.mark.parametrize("output", [(256, 256), (200, 150)])
+def test_the_upscaler_leaves_output_frames_no_larger_than_the_generation_resolution(small_settings, output):
+    settings = small_settings.merged({"output": {"width": output[0], "height": output[1]}})
+
+    assert torch.equal(upscaler_output(settings, True).data, upscaler_output(settings, False).data)
+
+
+def test_turning_the_upscaler_off_and_on_applies_to_the_next_output_frame(small_settings, net):
+    settings = small_settings.merged({"strength": 0.0, "upscaler": True})
+    source, sink = net.add_source("cam", repeat_fps=100), net.sink(settings.sink)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        source.push(input_frame(solid(320, 240, DIM_RED)))
+        sink.wait_for(lambda f: len(sink.frames) >= 3)
+        off = runtime.update(upscaler=False)
+        plain = sink.wait_for(lambda f: f.settings_version == off)
+        sent_before = len(sink.frames)
+        on = runtime.update(upscaler=True)
+        upscaled = sink.wait_for(lambda f: f.settings_version == on)
+
+    assert close_to(plain, DIM_RED)
+    assert close_to(upscaled, UPSCALED_DIM_RED)
+    position = next(i for i, f in enumerate(sink.frames) if f is upscaled)
+    assert position - sent_before <= IN_FLIGHT + 1  # a Live Setting: no gap in output

@@ -396,3 +396,34 @@ def test_a_preset_keeps_temporal_coherence(rig: Rig):
 
     wait_until(lambda: rig.runtime.settings()[0].temporal_coherence is False)
     panel.close()
+
+
+def test_the_upscaler_is_a_live_switch_on_every_control_surface(rig: Rig):
+    fields = {field["path"]: field for field in rig.panel().hello["schema"]}
+    assert fields["upscaler"] == {"path": "upscaler", "class": "live", "type": "boolean", "default": True}
+
+    rig.osc_send("/streamturbo/upscaler", 0.0)
+    wait_until(lambda: rig.runtime.settings()[0].upscaler is False)
+    (sent,) = rig.osc_in.wait_for("/streamturbo/upscaler")
+    assert (sent, type(sent)) == (0, int)
+
+    rig.osc_send("/streamturbo/preset/recall", "Glass")
+    wait_until(lambda: rig.runtime.settings()[0].upscaler is True)
+
+
+def test_settings_and_presets_saved_before_the_upscaler_load_with_it_on(tmp_path: Path):
+    older = tmp_path / "last-settings.toml"
+    older.write_text("strength = 0.5\ntemporal_coherence = true\n", encoding="utf-8")
+
+    assert Settings.load(older).upscaler is True
+
+
+def test_a_preset_keeps_the_upscaler(rig: Rig):
+    panel = rig.panel()
+    panel.request("update", changes={"upscaler": False})
+    assert panel.request("preset.save", name="Plain resize")["ok"]
+    panel.request("update", changes={"upscaler": True})
+    assert panel.request("preset.recall", name="Plain resize")["ok"]
+
+    wait_until(lambda: rig.runtime.settings()[0].upscaler is False)
+    panel.close()

@@ -1,8 +1,10 @@
-"""Downloads Model Spec weights at their pinned revisions into the project's models folder."""
+"""Downloads weights at their pinned revisions or hashes into the project's models folder."""
 
+import hashlib
+import urllib.request
 from pathlib import Path
 
-from streamturbo.model_spec import ModelSpec, Weights
+from streamturbo.model_spec import UPSCALER, ModelSpec, PinnedFile, Weights
 from streamturbo.paths import models_dir
 
 
@@ -20,6 +22,26 @@ def fetch(weights: Weights, cache_dir: Path | None = None) -> Path:
     )
 
 
-def fetch_all(spec: ModelSpec, cache_dir: Path | None = None) -> tuple[Path, Path]:
-    """Return the (model, tiny VAE) snapshot folders."""
-    return fetch(spec.model, cache_dir), fetch(spec.tiny_vae, cache_dir)
+def fetch_file(pinned: PinnedFile, folder: Path | None = None) -> Path:
+    """Return the local file, downloading it on first use; a file whose SHA-256 differs is never used."""
+    path = (folder or models_dir() / "files") / pinned.name
+    if path.is_file() and _sha256(path) == pinned.sha256:
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(".partial")
+    urllib.request.urlretrieve(pinned.url, partial)
+    if (actual := _sha256(partial)) != pinned.sha256:
+        partial.unlink()
+        raise ValueError(f"{pinned.url} has SHA-256 {actual}, expected {pinned.sha256}")
+    partial.replace(path)
+    return path
+
+
+def _sha256(path: Path) -> str:
+    with path.open("rb") as file:
+        return hashlib.file_digest(file, "sha256").hexdigest()
+
+
+def fetch_all(spec: ModelSpec, cache_dir: Path | None = None) -> tuple[Path, Path, Path]:
+    """Return the model and tiny VAE snapshot folders (in `cache_dir` when given), and the Upscaler's weights file."""
+    return fetch(spec.model, cache_dir), fetch(spec.tiny_vae, cache_dir), fetch_file(UPSCALER)

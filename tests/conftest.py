@@ -14,7 +14,8 @@ class FakeBackend:
     Its UNet predicts no noise, so Output Frames are the Input Frame plus the Seed's noise, scaled
     by Strength, pushed through an 8x down/up-sample. A Prompt's embedding is filled with its `shades` entry
     (0 when absent) and the UNet brightens the image by that much, so tests can see which Prompt, or which
-    mix of Prompts, generated a frame. `unet_delay` simulates a slow GPU and
+    mix of Prompts, generated a frame. Its Upscaler enlarges 4x and brightens by a quarter of the range, so
+    tests can see which Output Frames it made. `unet_delay` simulates a slow GPU and
     `failures` makes that many UNet calls raise. A `negative` Backend inverts its Output Frames, so tests can
     tell which Backend generated a frame.
     """
@@ -46,6 +47,9 @@ class FakeBackend:
         image = F.interpolate(latents[:, :3], scale_factor=self.latent_scale, mode="nearest").clamp(-1, 1)
         return -image if self.negative else image
 
+    def upscale(self, image: torch.Tensor) -> torch.Tensor:
+        return (F.interpolate(image, scale_factor=4, mode="nearest") + 0.5).clamp(-1, 1)
+
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
         if self.unet_delay:
             time.sleep(self.unet_delay)
@@ -69,8 +73,8 @@ class FakeBackend:
 def small_settings() -> Settings:
     """Small sizes keep the fake Backend fast on CPU. Source "cam" and Sink "out" are both Spout (RGBA).
 
-    Temporal Smoothing, Strength glide and Prompt transitions are off, so each Output Frame follows its Input
-    Frame and the latest Settings at once; the tests for those features turn them on.
+    Temporal Smoothing, Strength glide, Prompt transitions and the Upscaler are off, so each Output Frame follows
+    its Input Frame and the latest Settings at once; the tests for those features turn them on.
     """
     return Settings.model_validate(
         {
@@ -81,6 +85,7 @@ def small_settings() -> Settings:
             "temporal_smoothing": 0.0,
             "strength_glide": 0.0,
             "prompt_transition": 0.0,
+            "upscaler": False,
         }
     )
 

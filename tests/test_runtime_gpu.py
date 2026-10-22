@@ -37,6 +37,14 @@ def baseline_gib() -> float:
     return (total - free) / 2**30
 
 
+@pytest.fixture(autouse=True)
+def cached_memory_released():
+    """Each test leaves no cached blocks behind: with TouchDesigner open, the PyTorch UNet and the Engines together
+    leave little room, and spilling into system memory makes the GPU tests crawl."""
+    yield
+    torch.cuda.empty_cache()
+
+
 @pytest.fixture(scope="module")
 def pytorch(baseline_gib):
     from streamturbo.backends.pytorch import PyTorchBackend
@@ -58,8 +66,8 @@ def backend(request):
     return request.getfixturevalue(request.param)
 
 
-# Glass without Strength glide, Prompt transitions, Temporal Smoothing or Temporal Coherence, so the first Output
-# Frame of a change shows all of it.
+# Glass without Strength glide, Prompt transitions, Temporal Smoothing, Temporal Coherence or the Upscaler, so the
+# first Output Frame of a change shows all of it.
 GLASS = Settings.model_validate(
     {
         "source": {"transport": "spout", "name": "cam"},
@@ -68,6 +76,7 @@ GLASS = Settings.model_validate(
         "prompt_transition": 0.0,
         "temporal_smoothing": 0.0,
         "temporal_coherence": False,
+        "upscaler": False,
     }
 )
 FLICKER_REDUCTION = 0.85  # Temporal Smoothing at its default must cut flicker at least this much (measured 0.79)
@@ -135,9 +144,18 @@ def test_seed_reproduces_output_and_strength_never_rerolls_noise(backend, glass)
     assert difference(first, strength_back) < 0.5
 
 
-def test_glass_preset_stays_within_vram_budget(request, backend, glass, baseline_gib):
+# Glass as it is, and 512x512 Generations enlarged 4x by the Upscaler, the largest it is used for (spec #19).
+UPSCALED_4X = {
+    "generation": {"width": 512, "height": 512},
+    "output": {"width": 2048, "height": 2048},
+    "upscaler": True,
+}
+
+
+@pytest.mark.parametrize("sizes", [{}, UPSCALED_4X])
+def test_glass_preset_stays_within_vram_budget(request, backend, glass, baseline_gib, sizes):
     net, sink = glass
-    with Runtime(GLASS, backend, net):
+    with Runtime(GLASS.merged(sizes), backend, net):
         sink.wait_for(lambda _: len(sink.frames) >= 10, timeout=60)
         free, total = torch.cuda.mem_get_info()
 
@@ -222,9 +240,9 @@ def warp_error(frames: list[torch.Tensor], step: int) -> float:
 LAPLACE = torch.tensor([[0.0, 1, 0], [1, -4, 1], [0, 1, 0]]).view(1, 1, 3, 3)
 
 
-def sharpness(frames: list[torch.Tensor]) -> float:
+def sharpness(frames: list[torch.Tensor], skip: int = 5) -> float:
     """Mean absolute Laplacian of the grey picture: fine detail, which blending away boiling would soften."""
-    grey = [f.mean(dim=-1)[None, None] for f in frames[5:]]
+    grey = [f.mean(dim=-1)[None, None] for f in frames[skip:]]
     return sum(torch.nn.functional.conv2d(g, LAPLACE).abs().mean().item() for g in grey) / len(grey)
 
 
@@ -262,3 +280,20 @@ def test_a_wide_generation_resolution_fits_and_upscales(backend):
     assert (frame.width, frame.height) == (1920, 1080) and glass.shape == (1080, 1920, 3)
     assert image[:, :200].mean() < 10 and image[:, -200:].mean() < 10  # pillarboxed: 240 px bars each side
     assert image[:, 400:1520].mean() > 60  # with the picture between them
+
+
+UPSCALER_SHARPNESS = 1.4  # of the detail of plain resizing (measured 1.69 on both Backends)
+
+
+def test_the_upscaler_makes_enlarged_output_frames_sharper(backend):
+    """512x512 Generations enlarged to 1024x1024, with and without the Upscaler."""
+    net = MemoryTransports()
+    net.add_source("cam", repeat_fps=60).push(input_frame(synthetic_frame(512, 512)))
+    settings = GLASS.merged({"generation": {"width": 512, "height": 512}, "output": {"width": 1024, "height": 1024}})
+    sink = net.sink(settings.sink)
+    with Runtime(settings, backend, net) as runtime:
+        off = output_for(runtime, sink)
+        on = output_for(runtime, sink, upscaler=True)
+
+    assert on.shape == off.shape == (1024, 1024, 3)
+    assert sharpness([on], skip=0) > UPSCALER_SHARPNESS * sharpness([off], skip=0)

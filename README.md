@@ -96,6 +96,7 @@ strength_glide = 0.25  # strength 改變時花幾秒滑到新值，所有 Contro
 seed = 2               # 固定雜訊；調整 strength 不會改變雜訊
 temporal_smoothing = 0.2  # 每格保留多少上一格（0–0.95）以減少閃爍；0 表示關閉，太高時快速移動會拖影
 temporal_coherence = true # 每格生成時也參考上一格的特徵，讓細節留在原位不亂跳；不會變糊
+upscaler = true           # Output Resolution 大於 Generation Resolution 時，用 Upscaler（小型 AI 模型）放大並補出細節，而不是單純縮放
 fit_mode = "fill"      # 輸入比例不同時：fill 裁切填滿、fit 加黑邊、stretch 拉伸
 
 [source]
@@ -134,7 +135,7 @@ Temporal Coherence 和 Temporal Smoothing 互相獨立，可以單獨或一起�
 
 | 類別 | 欄位 | 套用方式 |
 |---|---|---|
-| Live | `prompts`、`prompt_transition`、`strength`、`strength_glide`、`seed`、`temporal_smoothing`、`temporal_coherence`、`similar_frame_skip.*` | 下一格就開始生效，輸出不中斷；`prompts` 和 `strength` 依設定的時間漸變 |
+| Live | `prompts`、`prompt_transition`、`strength`、`strength_glide`、`seed`、`temporal_smoothing`、`temporal_coherence`、`upscaler`、`similar_frame_skip.*` | 下一格就開始生效，輸出不中斷；`prompts` 和 `strength` 依設定的時間漸變 |
 | Reset | `source.*`、`sink.*`、`generation.*`、`output.*`、`fit_mode` | 重新開啟 Source 或 Sink、重配緩衝區，輸出會停頓一下 |
 | Rebuild | `backend` | 需要的 TensorRT Engine 建好後才完全生效；建置期間由 PyTorch 繼續輸出 |
 
@@ -170,7 +171,7 @@ StreamTurbo 在 7000 埠接收 OSC，並把變更和狀態回報到 127.0.0.1:70
 | 方向 | 位址 | 值 |
 |---|---|---|
 | 收 | `/streamturbo/strength`、`/streamturbo/seed`、`/streamturbo/temporal_smoothing`、`/streamturbo/prompt_transition`…… | 一個值 |
-| 收 | `/streamturbo/temporal_coherence` | 0 關閉、1 開啟；回報時也用 0 或 1 |
+| 收 | `/streamturbo/temporal_coherence`、`/streamturbo/upscaler` | 0 關閉、1 開啟；回報時也用 0 或 1 |
 | 收 | `/streamturbo/prompts/0/text`、`/streamturbo/prompts/0/weight` | 依索引改 Prompt Blend 的某一項；用下一個索引（目前項數）會新增一項，權重預設 1 |
 | 收 | `/streamturbo/prompts` | 整個 Prompt Blend 的 JSON 字串，例如 `'[{"text": "ice", "weight": 1}]'`；要移除項目時用這個（移除後 TouchDesigner 端 OSC In 裡舊的較大索引值不會自動清掉） |
 | 收 | `/streamturbo/prompt` | 一個提示詞，取代整個 Prompt Blend |

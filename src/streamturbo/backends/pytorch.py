@@ -8,6 +8,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from streamturbo import upscaler
+
 KeysValues = dict[str, tuple[torch.Tensor, torch.Tensor]]  # per self-attention layer: one Generation's features
 # Self-attention at the highest resolution stays plain under Temporal Coherence: it costs most there (128x96
 # tokens at 1024x768) and adds little (M5 spike, #14).
@@ -109,7 +111,7 @@ class PyTorchBackend:
     latent_channels = 4
     latent_scale = 8
 
-    def __init__(self, model_dir: Path, tiny_vae_dir: Path, device: str = "cuda") -> None:
+    def __init__(self, model_dir: Path, tiny_vae_dir: Path, upscaler_weights: Path, device: str = "cuda") -> None:
         from diffusers.models.autoencoders.autoencoder_tiny import AutoencoderTiny
         from diffusers.schedulers.scheduling_euler_discrete import EulerDiscreteScheduler
         from transformers import CLIPTextModel, CLIPTokenizer
@@ -131,6 +133,7 @@ class PyTorchBackend:
         self._unet: torch.nn.Module | None = self._load_unet()
         self._vae = AutoencoderTiny.from_pretrained(tiny_vae_dir, torch_dtype=self.dtype)
         self._vae = self._vae.to(self.device).eval()  # pyright: ignore[reportArgumentType]
+        self._upscaler = upscaler.load(upscaler_weights, self.device, self.dtype)
         scheduler = EulerDiscreteScheduler.from_pretrained(model_dir, subfolder="scheduler")
         self.alphas_cumprod = scheduler.alphas_cumprod.float().to(self.device)  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -187,6 +190,10 @@ class PyTorchBackend:
     @torch.inference_mode()
     def decode(self, latents: torch.Tensor) -> torch.Tensor:
         return self._vae.decode(latents.to(self.dtype), return_dict=False)[0]
+
+    @torch.inference_mode()
+    def upscale(self, image: torch.Tensor) -> torch.Tensor:
+        return self._upscaler(image.to(self.dtype))
 
     @torch.inference_mode()
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
