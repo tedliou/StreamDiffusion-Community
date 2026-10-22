@@ -28,7 +28,7 @@ UNQUANTISED = ("*conv_in*", "*conv_out*", "*time_embedding*", "*time_emb_proj*")
 
 
 def export_quantized_unet(backend: PyTorchBackend, spec: ModelSpec, path: Path) -> None:
-    import modelopt.torch.quantization as mtq
+    import modelopt.torch.quantization as mtq  # pyright: ignore[reportMissingImports]  # the optional int8 group
 
     from streamturbo.backends.tensorrt import export_onnx
 
