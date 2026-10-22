@@ -159,7 +159,10 @@ class Runtime:
         """Generate once from a black frame so kernel selection (seconds on first use) happens before going live."""
         gen = self._settings.generation
         black = InputFrame(host_buffer(gen.width * gen.height * 4).zero_(), gen.width, gen.height, PixelFormat.RGBA)
-        self._generate(-1, self._prepare(black)).timing.wait_ms()
+        device = self._backend.device
+        # On a stream of its own, as Generation runs: TensorRT synchronises extra work on the default stream.
+        with torch.cuda.stream(torch.cuda.Stream(device) if device.type == "cuda" else None):
+            self._generate(-1, self._prepare(black)).timing.wait_ms()
         self._core.forget_previous()  # so Temporal Smoothing never fades in from the black frame
 
     def stop(self) -> None:
@@ -372,7 +375,7 @@ class Runtime:
             image, strength, gen.width, gen.height, settings.temporal_smoothing, settings.temporal_coherence
         )
         out, fmt = settings.output, self._sink_format
-        if settings.upscaler and (out.width > gen.width or out.height > gen.height):
+        if settings.upscaling:
             # Resized while still in the Backend's precision: a 4x picture in float32 would cost hundreds of MiB.
             result = imageops.fit(self._backend.upscale(result), out.width, out.height, "stretch")
         packed = imageops.to_bytes((result.float() + 1) / 2, out.width, out.height, fmt)

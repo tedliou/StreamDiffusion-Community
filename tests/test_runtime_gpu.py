@@ -297,3 +297,26 @@ def test_the_upscaler_makes_enlarged_output_frames_sharper(backend):
 
     assert on.shape == off.shape == (1024, 1024, 3)
     assert sharpness([on], skip=0) > UPSCALER_SHARPNESS * sharpness([off], skip=0)
+
+
+def upscaled_output(backend, generation: tuple[int, int], factor: int) -> torch.Tensor:
+    width, height = generation
+    net = MemoryTransports()
+    net.add_source("cam", repeat_fps=60).push(input_frame(synthetic_frame(width, height)))
+    sizes = {
+        "generation": {"width": width, "height": height},
+        "output": {"width": width * factor, "height": height * factor},
+    }
+    settings = GLASS.merged({**sizes, "upscaler": True})
+    sink = net.sink(settings.sink)
+    with Runtime(settings, backend, net) as runtime:
+        return output_for(runtime, sink)
+
+
+# 2x at the 512-pixel sizes the Upscaler is meant for, and 4x, where Output Frames are its picture unresized.
+@pytest.mark.parametrize(("generation", "factor"), [((512, 512), 2), ((512, 384), 2), ((512, 512), 4)])
+def test_tensorrt_upscaler_matches_pytorch(pytorch, tensorrt, generation, factor):
+    ours, reference = upscaled_output(tensorrt, generation, factor), upscaled_output(pytorch, generation, factor)
+
+    assert ours.shape == (generation[1] * factor, generation[0] * factor, 3)
+    assert difference(ours, reference) < TENSORRT_TOLERANCE

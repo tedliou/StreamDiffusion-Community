@@ -1,4 +1,4 @@
-"""TensorRT Backend: the UNet and the tiny VAE as TensorRT 10 Engines built on this machine (ADR-0005).
+"""TensorRT Backend: the UNet, the tiny VAE and the Upscaler as TensorRT 10 Engines built on this machine (ADR-0005).
 
 The text encoder and the noise schedule stay on the PyTorch Backend it wraps: a Prompt change is rare and cheap.
 The networks are built strongly typed, so precision comes from the ONNX graph: FP16 weights give an FP16 Engine,
@@ -21,16 +21,18 @@ import torch.nn.functional as F
 
 from streamturbo.backends import ProgressReport
 from streamturbo.backends.pytorch import CoherentLayer, PyTorchBackend
-from streamturbo.model_spec import ModelSpec
+from streamturbo.model_spec import UPSCALER, ModelSpec
+from streamturbo.upscaler import FACTOR
 
-Component = Literal["unet", "vae_encoder", "vae_decoder"]
-COMPONENTS: tuple[Component, ...] = ("unet", "vae_encoder", "vae_decoder")
+Component = Literal["unet", "vae_encoder", "vae_decoder", "upscaler"]
+COMPONENTS: tuple[Component, ...] = ("unet", "vae_encoder", "vae_decoder", "upscaler")
 Precision = Literal["fp16", "int8"]
 Progress = Callable[[str, float], None]  # (component, fraction of all Engines done)
 
 TEXT_TOKENS, TEXT_DIM = 77, 1024  # sd-turbo's OpenCLIP text encoder
 EXPORT_VERSION = 1  # bumped whenever the exported graph changes, so older cached Engines are rebuilt
 COHERENT_EXPORT_VERSION = 2  # the FP16 UNet's: 2 takes and returns Temporal Coherence features
+UPSCALER_EXPORT_VERSION = 1  # the Upscaler's own, so changing it never rebuilds the sd-turbo Engines
 # Tactic scratch while building. FP16 is built while the Runtime runs, and 2 GiB keeps that under 8 GB of VRAM;
 # the INT8 UNet is a bench option built on its own.
 WORKSPACE_BYTES: dict[Precision, int] = {"fp16": 2 << 30, "int8": 3 << 30}
@@ -40,7 +42,7 @@ INT8_RESOLUTIONS = ((768, 576), (1024, 768))
 
 
 def component_precision(component: Component, precision: Precision) -> Precision:
-    """The precision one component is built in: only the UNet has an INT8 option, the tiny VAE is always FP16."""
+    """The precision one component is built in: only the UNet has an INT8 option, the rest is always FP16."""
     return precision if component == "unet" else "fp16"
 
 
@@ -55,8 +57,8 @@ def _tensorrt() -> Any:
 class EngineKey:
     """Everything an Engine depends on: a change to any of it means another Engine (ADR-0005)."""
 
-    model_revision: str
-    tiny_vae_revision: str
+    model_revision: str  # for the Upscaler: its weights' SHA-256
+    tiny_vae_revision: str  # empty for the Upscaler
     component: Component
     min_side: int
     max_side: int
@@ -73,14 +75,19 @@ class EngineKey:
         major, minor = torch.cuda.get_device_capability()
         precision = component_precision(component, precision)
         int8 = precision == "int8"
+        upscaler = component == "upscaler"
+        if upscaler:
+            export_version = UPSCALER_EXPORT_VERSION
+        else:
+            export_version = COHERENT_EXPORT_VERSION if coherent(component, precision) else EXPORT_VERSION
         return cls(
-            model_revision=spec.model.revision,
-            tiny_vae_revision=spec.tiny_vae.revision,
+            model_revision=UPSCALER.sha256 if upscaler else spec.model.revision,
+            tiny_vae_revision="" if upscaler else spec.tiny_vae.revision,
             component=component,
             min_side=min(INT8_RESOLUTIONS[0]) if int8 else spec.min_side,
             max_side=max(INT8_RESOLUTIONS[1]) if int8 else spec.max_side,
             precision=precision,
-            export_version=COHERENT_EXPORT_VERSION if coherent(component, precision) else EXPORT_VERSION,
+            export_version=export_version,
             gpu=torch.cuda.get_device_name(),
             compute_capability=(major, minor),
             tensorrt=trt.__version__,
@@ -187,6 +194,12 @@ def _io(
             outputs=("latents",),
             dynamic={"image": {2: "H", 3: "W"}, "latents": {2: "h", 3: "w"}},
         )
+    if component == "upscaler":
+        return _Io(
+            inputs=(("image", (1, 3, mid, mid), (1, 3, lo, lo), (1, 3, hi, hi)),),
+            outputs=("upscaled",),
+            dynamic={"image": {2: "H", 3: "W"}, "upscaled": {2: f"{FACTOR}H", 3: f"{FACTOR}W"}},
+        )
     cells = (lo // latent_scale, mid // latent_scale, hi // latent_scale)
     return _Io(
         inputs=(("latents", (1, 4, cells[1], cells[1]), (1, 4, cells[0], cells[0]), (1, 4, cells[2], cells[2])),),
@@ -242,6 +255,8 @@ def export_onnx(
         module = backend.coherent_graph()
     elif component == "unet":
         module = _Unet(backend.unet_module())
+    elif component == "upscaler":
+        module = backend._upscaler
     else:
         module = _TinyVae(backend._vae, "encode" if component == "vae_encoder" else "decode")
     io = _io(component, spec, backend.latent_scale, precision, _coherent_layers(backend, component, precision))
@@ -390,7 +405,7 @@ def build_engines(
 
 class _Scratch:
     """Activation memory the Engines share: they run one after another on one stream, so one buffer, sized for
-    the largest shape actually used rather than for the 1024x1024 maximum, serves all three."""
+    the largest shape actually used rather than for the 1024x1024 maximum, serves them all."""
 
     def __init__(self, device: torch.device) -> None:
         self.tensor = torch.empty(0, dtype=torch.uint8, device=device)
@@ -519,6 +534,7 @@ class TensorRTBackend:
         self._unet = Engine(paths["unet"], self._runtime, scratch, cuda_graphs)
         self._encoder = Engine(paths["vae_encoder"], self._runtime, scratch, cuda_graphs)
         self._decoder = Engine(paths["vae_decoder"], self._runtime, scratch, cuda_graphs)
+        self._upscaler = Engine(paths["upscaler"], self._runtime, scratch, cuda_graphs)
         # The INT8 bench UNet has no Temporal Coherence inputs; it then generates plainly.
         self._layers = pytorch.coherent_layers if SWITCH in self._unet.inputs else []
         self._switch = {on: torch.full((1,), float(on), dtype=self.dtype, device=self.device) for on in (0, 1)}
@@ -534,7 +550,7 @@ class TensorRTBackend:
         return self._decoder(latents=latents)
 
     def upscale(self, image: torch.Tensor) -> torch.Tensor:
-        return self._pytorch.upscale(image)  # the PyTorch Upscaler until it has an Engine (#21)
+        return self._upscaler(image=image)
 
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
         return self.coherent_unet(latents, timestep, prompt_embeds, None)[0]

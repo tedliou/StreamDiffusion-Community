@@ -94,6 +94,12 @@ class Settings(_Model):
     similar_frame_skip: SimilarFrameSkip = SimilarFrameSkip()
     backend: BackendChoice = _setting("rebuild", "auto")
 
+    @property
+    def upscaling(self) -> bool:
+        """Whether the Upscaler runs: it is on and the Output Resolution is larger on either side."""
+        gen, out = self.generation, self.output
+        return self.upscaler and (out.width > gen.width or out.height > gen.height)
+
     @model_validator(mode="before")
     @classmethod
     def _single_prompt(cls, values: Any) -> Any:
