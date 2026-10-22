@@ -4,6 +4,8 @@ The fast path runs the UNet and tiny VAE as TensorRT FP16 Engines with dynamic-s
 
 An INT8 UNet (ModelOpt post-training quantisation, exported as Q/DQ) exists only as a bench option. Its profile covers just the bench matrix's 4:3 Generation Resolutions, and it does not build on an 8 GB RTX 3070 yet.
 
+The FP16 UNet Engine also carries Temporal Coherence (#16): a `switch` input and each coherent layer's previous keys and values in, this call's out, with token counts dynamic over the same profile. One Engine serves the setting on and off, since `switch` 0 masks the previous features out, so toggling never triggers a build. The INT8 UNet stays without it. The export version is per Engine, so this change rebuilt only the FP16 UNet.
+
 An Engine only runs on the GPU and TensorRT version it was built for, so shipping Engines would break on most machines; building locally costs a few minutes once.
 
 ## Considered Options

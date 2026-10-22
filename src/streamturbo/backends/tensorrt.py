@@ -100,6 +100,10 @@ def coherent(component: Component, precision: Precision) -> bool:
     return component == "unet" and precision == "fp16"
 
 
+def _coherent_layers(backend: PyTorchBackend, component: Component, precision: Precision) -> list[CoherentLayer]:
+    return backend.coherent_layers if coherent(component, precision) else []
+
+
 def engine_paths(engines_dir: Path, spec: ModelSpec, precision: Precision = "fp16") -> dict[Component, Path]:
     return {c: engines_dir / EngineKey.for_this_machine(spec, c, precision).filename for c in COMPONENTS}
 
@@ -240,8 +244,7 @@ def export_onnx(
         module = _Unet(backend.unet_module())
     else:
         module = _TinyVae(backend._vae, "encode" if component == "vae_encoder" else "decode")
-    layers = backend.coherent_layers if coherent(component, precision) else ()
-    io = _io(component, spec, backend.latent_scale, precision, layers)
+    io = _io(component, spec, backend.latent_scale, precision, _coherent_layers(backend, component, precision))
     dtypes = {"timestep": torch.float32}
     on_cpu = backend.device.type == "cpu"  # tracing on the CPU is slow: trace the smallest shape there
     args = tuple(
@@ -375,7 +378,7 @@ def build_engines(
                 backend.latent_scale,
                 monitor,
                 component_precision(component, precision),
-                backend.coherent_layers if coherent(component, precision) else (),
+                _coherent_layers(backend, component, precision),
             )
         finally:
             shutil.rmtree(work, ignore_errors=True)
@@ -519,7 +522,7 @@ class TensorRTBackend:
         # The INT8 bench UNet has no Temporal Coherence inputs; it then generates plainly.
         self._layers = pytorch.coherent_layers if SWITCH in self._unet.inputs else []
         self._switch = {on: torch.full((1,), float(on), dtype=self.dtype, device=self.device) for on in (0, 1)}
-        self._none: tuple[Shape, dict[str, torch.Tensor]] = ((), {})  # masked-out features for one latent size
+        self._zeros: tuple[Shape, dict[str, torch.Tensor]] = ((), {})  # masked-out features for one latent size
 
     def encode_prompt(self, prompt: str) -> torch.Tensor:
         return self._pytorch.encode_prompt(prompt)
@@ -543,20 +546,20 @@ class TensorRTBackend:
         features: dict[str, torch.Tensor] = previous if isinstance(previous, dict) else zeros
         on = features is not zeros and all(features[n].shape == t.shape for n, t in zeros.items())
         outputs = self._unet.run(**plain, **(features if on else zeros), switch=self._switch[int(on)])
-        made: dict[str, torch.Tensor] = {}
+        returned: dict[str, torch.Tensor] = {}
         for index in range(len(self._layers)):
             keys, values, new_keys, new_values = feature_names(index)
-            made |= {keys: outputs[new_keys], values: outputs[new_values]}
-        return outputs["noise"], made
+            returned |= {keys: outputs[new_keys], values: outputs[new_values]}
+        return outputs["noise"], returned
 
     def _features_for(self, latent_shape: Shape) -> dict[str, torch.Tensor]:
         """Zero features for a latent size: what the Engine gets, masked out, when there are no previous ones."""
-        if self._none[0] != latent_shape:
+        if self._zeros[0] != latent_shape:
             cells_h, cells_w = latent_shape[-2:]
             zeros = {}
             for index, layer in enumerate(self._layers):
                 shape = (1, layer.tokens(cells_h, cells_w), layer.channels)
                 keys, values, *_ = feature_names(index)
                 zeros |= {name: torch.zeros(shape, dtype=self.dtype, device=self.device) for name in (keys, values)}
-            self._none = (tuple(latent_shape), zeros)
-        return self._none[1]
+            self._zeros = (tuple(latent_shape), zeros)
+        return self._zeros[1]
