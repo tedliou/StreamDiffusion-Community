@@ -11,7 +11,7 @@ import hashlib
 import json
 import shutil
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -20,7 +20,7 @@ import torch
 import torch.nn.functional as F
 
 from streamturbo.backends import ProgressReport
-from streamturbo.backends.pytorch import PyTorchBackend
+from streamturbo.backends.pytorch import CoherentLayer, PyTorchBackend
 from streamturbo.model_spec import ModelSpec
 
 Component = Literal["unet", "vae_encoder", "vae_decoder"]
@@ -30,6 +30,7 @@ Progress = Callable[[str, float], None]  # (component, fraction of all Engines d
 
 TEXT_TOKENS, TEXT_DIM = 77, 1024  # sd-turbo's OpenCLIP text encoder
 EXPORT_VERSION = 1  # bumped whenever the exported graph changes, so older cached Engines are rebuilt
+COHERENT_EXPORT_VERSION = 2  # the FP16 UNet's: 2 takes and returns Temporal Coherence features
 # Tactic scratch while building. FP16 is built while the Runtime runs, and 2 GiB keeps that under 8 GB of VRAM;
 # the INT8 UNet is a bench option built on its own.
 WORKSPACE_BYTES: dict[Precision, int] = {"fp16": 2 << 30, "int8": 3 << 30}
@@ -79,7 +80,7 @@ class EngineKey:
             min_side=min(INT8_RESOLUTIONS[0]) if int8 else spec.min_side,
             max_side=max(INT8_RESOLUTIONS[1]) if int8 else spec.max_side,
             precision=precision,
-            export_version=EXPORT_VERSION,
+            export_version=COHERENT_EXPORT_VERSION if coherent(component, precision) else EXPORT_VERSION,
             gpu=torch.cuda.get_device_name(),
             compute_capability=(major, minor),
             tensorrt=trt.__version__,
@@ -92,6 +93,11 @@ class EngineKey:
         cc = "".join(map(str, self.compute_capability))
         sides = f"{self.min_side}-{self.max_side}"
         return f"{self.component}-{self.precision}-{sides}-sm{cc}-trt{self.tensorrt}-{digest}.plan"
+
+
+def coherent(component: Component, precision: Precision) -> bool:
+    """Only the FP16 UNet has Temporal Coherence; the INT8 bench UNet stays without it."""
+    return component == "unet" and precision == "fp16"
 
 
 def engine_paths(engines_dir: Path, spec: ModelSpec, precision: Precision = "fp16") -> dict[Component, Path]:
@@ -124,16 +130,32 @@ class _TinyVae(torch.nn.Module):
         return getattr(self.vae, self.part)(x, return_dict=False)[0]
 
 
+Shape = tuple[int, ...]
+SWITCH = "switch"  # the FP16 UNet's Temporal Coherence input: 1 attends to the previous features, 0 masks them out
+
+
+def feature_names(index: int) -> tuple[str, str, str, str]:
+    """A coherent layer's Engine tensors: its previous keys and values in, this call's keys and values out."""
+    return f"previous_keys_{index}", f"previous_values_{index}", f"keys_{index}", f"values_{index}"
+
+
 @dataclass(frozen=True)
 class _Io:
     """One component's ONNX inputs: (name, example shape, min shape, max shape) with sides in pixels or cells."""
 
-    inputs: tuple[tuple[str, tuple[int, ...], tuple[int, ...], tuple[int, ...]], ...]
-    output: str
+    inputs: tuple[tuple[str, Shape, Shape, Shape], ...]
+    outputs: tuple[str, ...]
     dynamic: dict[str, dict[int, str]]
 
 
-def _io(component: Component, spec: ModelSpec, latent_scale: int, precision: Precision = "fp16") -> _Io:
+def _io(
+    component: Component,
+    spec: ModelSpec,
+    latent_scale: int,
+    precision: Precision = "fp16",
+    layers: Sequence[CoherentLayer] = (),
+) -> _Io:
+    """`layers` are the self-attention layers the FP16 UNet takes and returns Temporal Coherence features for."""
     lo, hi, step = spec.min_side, spec.max_side, spec.side_step
     mid = (lo + hi) // 2 // step * step
     if component == "unet":
@@ -143,30 +165,28 @@ def _io(component: Component, spec: ModelSpec, latent_scale: int, precision: Pre
             (lw, lh), (hw, hh) = INT8_RESOLUTIONS
             low, high = (1, 4, lh // latent_scale, lw // latent_scale), (1, 4, hh // latent_scale, hw // latent_scale)
             sample = (high, low, high)
-        return _Io(
-            inputs=(
-                ("sample", *sample),
-                ("timestep", (1,), (1,), (1,)),
-                (
-                    "encoder_hidden_states",
-                    (1, TEXT_TOKENS, TEXT_DIM),
-                    (1, TEXT_TOKENS, TEXT_DIM),
-                    (1, TEXT_TOKENS, TEXT_DIM),
-                ),
-            ),
-            output="noise",
-            dynamic={"sample": {2: "h", 3: "w"}, "noise": {2: "h", 3: "w"}},
-        )
+        text = (1, TEXT_TOKENS, TEXT_DIM)
+        inputs = [("sample", *sample), ("timestep", (1,), (1,), (1,)), ("encoder_hidden_states", text, text, text)]
+        outputs, dynamic = ["noise"], {"sample": {2: "h", 3: "w"}, "noise": {2: "h", 3: "w"}}
+        if layers:
+            inputs.append((SWITCH, (1,), (1,), (1,)))
+        for index, layer in enumerate(layers):
+            low, opt, high = ((1, layer.tokens(c, c), layer.channels) for c in cells)
+            names = feature_names(index)
+            inputs += [(names[0], opt, low, high), (names[1], opt, low, high)]
+            outputs += names[2:]
+            dynamic |= {name: {1: f"tokens_{layer.downsample}"} for name in names}
+        return _Io(tuple(inputs), tuple(outputs), dynamic)
     if component == "vae_encoder":
         return _Io(
             inputs=(("image", (1, 3, mid, mid), (1, 3, lo, lo), (1, 3, hi, hi)),),
-            output="latents",
+            outputs=("latents",),
             dynamic={"image": {2: "H", 3: "W"}, "latents": {2: "h", 3: "w"}},
         )
     cells = (lo // latent_scale, mid // latent_scale, hi // latent_scale)
     return _Io(
         inputs=(("latents", (1, 4, cells[1], cells[1]), (1, 4, cells[0], cells[0]), (1, 4, cells[2], cells[2])),),
-        output="image",
+        outputs=("image",),
         dynamic={"latents": {2: "h", 3: "w"}, "image": {2: "H", 3: "W"}},
     )
 
@@ -214,11 +234,14 @@ def export_onnx(
 ) -> None:
     """Export one component of the loaded PyTorch Backend to ONNX (weights in a file beside it)."""
     module: torch.nn.Module
-    if component == "unet":
+    if coherent(component, precision):
+        module = backend.coherent_graph()
+    elif component == "unet":
         module = _Unet(backend.unet_module())
     else:
         module = _TinyVae(backend._vae, "encode" if component == "vae_encoder" else "decode")
-    io = _io(component, spec, backend.latent_scale, precision)
+    layers = backend.coherent_layers if coherent(component, precision) else ()
+    io = _io(component, spec, backend.latent_scale, precision, layers)
     dtypes = {"timestep": torch.float32}
     on_cpu = backend.device.type == "cpu"  # tracing on the CPU is slow: trace the smallest shape there
     args = tuple(
@@ -233,7 +256,7 @@ def export_onnx(
             str(path),
             dynamo=False,
             input_names=[name for name, *_ in io.inputs],
-            output_names=[io.output],
+            output_names=list(io.outputs),
             dynamic_axes=io.dynamic,
             opset_version=17,
             external_data=True,
@@ -248,6 +271,7 @@ def build_engine(
     latent_scale: int,
     progress=None,
     precision: Precision = "fp16",
+    layers: Sequence[CoherentLayer] = (),
 ) -> None:
     """Build and save one Engine with a dynamic-shape profile covering every Generation Resolution."""
     trt = _tensorrt()
@@ -265,7 +289,7 @@ def build_engine(
     if progress is not None:
         config.progress_monitor = progress
     profile = builder.create_optimization_profile()
-    for name, opt, lo, hi in _io(component, spec, latent_scale, precision).inputs:
+    for name, opt, lo, hi in _io(component, spec, latent_scale, precision, layers).inputs:
         profile.set_shape(name, lo, opt, hi)
     config.add_optimization_profile(profile)
     serialized = builder.build_serialized_network(network, config)
@@ -351,6 +375,7 @@ def build_engines(
                 backend.latent_scale,
                 monitor,
                 component_precision(component, precision),
+                backend.coherent_layers if coherent(component, precision) else (),
             )
         finally:
             shutil.rmtree(work, ignore_errors=True)
@@ -392,11 +417,25 @@ class Engine:
         self._names = [self._engine.get_tensor_name(i) for i in range(self._engine.num_io_tensors)]
         self._inputs = [n for n in self._names if self._engine.get_tensor_mode(n) == trt.TensorIOMode.INPUT]
         self._outputs = [n for n in self._names if self._engine.get_tensor_mode(n) == trt.TensorIOMode.OUTPUT]
+        # TensorRT's own auxiliary streams are blocking ones: while a capture forks onto them, any other thread's
+        # work on the legacy stream fails with CUDA_ERROR_STREAM_CAPTURE_IMPLICIT. Torch's streams are non-blocking.
+        self._aux_streams = [torch.cuda.Stream(scratch.tensor.device) for _ in range(self._engine.num_aux_streams)]
+        if self._aux_streams:
+            self._context.set_aux_streams([s.cuda_stream for s in self._aux_streams])
         self._cuda_graphs = cuda_graphs
         self._graphs: dict[tuple, tuple[torch.cuda.CUDAGraph | None, dict[str, torch.Tensor]]] = {}
         self._dtype = {n: _torch_dtype(self._engine.get_tensor_dtype(n)) for n in self._names}
 
+    @property
+    def inputs(self) -> list[str]:
+        return self._inputs
+
     def __call__(self, **inputs: torch.Tensor) -> torch.Tensor:
+        """The first output; `run` returns them all."""
+        return self.run(**inputs)[self._outputs[0]]
+
+    def run(self, **inputs: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Every output by name, copied out of the buffers the next call reuses."""
         key = tuple(tuple(inputs[n].shape) for n in self._inputs)
         stream = torch.cuda.current_stream()
         if self._scratch_version != self._scratch.version:  # another Engine grew the shared buffer
@@ -411,7 +450,7 @@ class Engine:
             self._context.execute_async_v3(stream.cuda_stream)
         else:
             graph.replay()
-        return buffers[self._outputs[0]].clone()
+        return {name: buffers[name].clone() for name in self._outputs}
 
     def _prepare(self, inputs: dict[str, torch.Tensor], stream: torch.cuda.Stream):
         buffers = {n: torch.empty_like(inputs[n], dtype=self._dtype[n]).contiguous() for n in self._inputs}
@@ -477,6 +516,10 @@ class TensorRTBackend:
         self._unet = Engine(paths["unet"], self._runtime, scratch, cuda_graphs)
         self._encoder = Engine(paths["vae_encoder"], self._runtime, scratch, cuda_graphs)
         self._decoder = Engine(paths["vae_decoder"], self._runtime, scratch, cuda_graphs)
+        # The INT8 bench UNet has no Temporal Coherence inputs; it then generates plainly.
+        self._layers = pytorch.coherent_layers if SWITCH in self._unet.inputs else []
+        self._switch = {on: torch.full((1,), float(on), dtype=self.dtype, device=self.device) for on in (0, 1)}
+        self._none: tuple[Shape, dict[str, torch.Tensor]] = ((), {})  # masked-out features for one latent size
 
     def encode_prompt(self, prompt: str) -> torch.Tensor:
         return self._pytorch.encode_prompt(prompt)
@@ -488,4 +531,32 @@ class TensorRTBackend:
         return self._decoder(latents=latents)
 
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
-        return self._unet(sample=latents, timestep=timestep, encoder_hidden_states=prompt_embeds)
+        return self.coherent_unet(latents, timestep, prompt_embeds, None)[0]
+
+    def coherent_unet(
+        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, previous: object | None
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor] | None]:
+        plain = {"sample": latents, "timestep": timestep, "encoder_hidden_states": prompt_embeds}
+        if not self._layers:
+            return self._unet(**plain), None
+        zeros = self._features_for(latents.shape)
+        features: dict[str, torch.Tensor] = previous if isinstance(previous, dict) else zeros
+        on = features is not zeros and all(features[n].shape == t.shape for n, t in zeros.items())
+        outputs = self._unet.run(**plain, **(features if on else zeros), switch=self._switch[int(on)])
+        made: dict[str, torch.Tensor] = {}
+        for index in range(len(self._layers)):
+            keys, values, new_keys, new_values = feature_names(index)
+            made |= {keys: outputs[new_keys], values: outputs[new_values]}
+        return outputs["noise"], made
+
+    def _features_for(self, latent_shape: Shape) -> dict[str, torch.Tensor]:
+        """Zero features for a latent size: what the Engine gets, masked out, when there are no previous ones."""
+        if self._none[0] != latent_shape:
+            cells_h, cells_w = latent_shape[-2:]
+            zeros = {}
+            for index, layer in enumerate(self._layers):
+                shape = (1, layer.tokens(cells_h, cells_w), layer.channels)
+                keys, values, *_ = feature_names(index)
+                zeros |= {name: torch.zeros(shape, dtype=self.dtype, device=self.device) for name in (keys, values)}
+            self._none = (tuple(latent_shape), zeros)
+        return self._none[1]
