@@ -15,11 +15,16 @@ Settings over OSC, shows status, and measures Round-trip Latency.
 PAREXEC = r"""
 # Sends Settings to StreamTurbo when the component's parameters change (OSC, /streamturbo/<setting path>).
 # Prompt is the first Prompt of the Prompt Blend, so Prompts added in the Web Panel stay.
-SETTINGS = {"Prompt": "prompts/0/text", "Strength": "strength", "Seed": "seed"}
+SETTINGS = {
+    "Prompt": "prompts/0/text",
+    "Strength": "strength",
+    "Seed": "seed",
+    "Temporalcoherence": "temporal_coherence",
+}
 
 
 def send(address, value):
-    op("oscout").sendOSC(address, [value])
+    op("oscout").sendOSC(address, [int(value) if isinstance(value, bool) else value])  # a toggle as 0 or 1
 
 
 def onValueChange(par, prev):
@@ -48,7 +53,12 @@ def onPulse(par):
 
 OSCIN_CALLBACKS = r"""
 # Shows what StreamTurbo reports: its Settings (whichever Control Surface changed them) and its status.
-SETTINGS = {"/streamturbo/prompts/0/text": "Prompt", "/streamturbo/strength": "Strength", "/streamturbo/seed": "Seed"}
+SETTINGS = {
+    "/streamturbo/prompts/0/text": "Prompt",
+    "/streamturbo/strength": "Strength",
+    "/streamturbo/seed": "Seed",
+    "/streamturbo/temporal_coherence": "Temporalcoherence",
+}
 STATUS = {
     "/streamturbo/status/source_state": "Sourcestate",
     "/streamturbo/status/throughput_fps": "Throughput",
@@ -125,7 +135,9 @@ def onFrameStart(frame):
                 finish(state)
                 return
         elif now - state["switched"] > TIMEOUT:
-            finish(state, "Timed out: is StreamTurbo receiving and sending?")
+            # A Spout Out deleted in this session can leave its name behind, frozen, so the new one sends as
+            # "<name>_2" while StreamTurbo keeps receiving the frozen picture.
+            finish(state, "Timed out: is StreamTurbo receiving this component's sender? See the README.")
             return
     parent().store("latency", state)
 """
@@ -156,6 +168,8 @@ def _custom_parameters(comp):
     strength.normMin, strength.normMax, strength.default, strength.val = 0, 1, 0.68, 0.68
     seed = page.appendInt("Seed", label="Seed")[0]
     seed.min, seed.clampMin, seed.normMax, seed.default, seed.val = 0, True, 1000, 2, 2
+    coherence = page.appendToggle("Temporalcoherence", label="Temporal Coherence")[0]
+    coherence.default = coherence.val = True
     page.appendStr("Preset", label="Preset")[0].val = "Glass"
     page.appendPulse("Recall", label="Recall Preset")
     page.appendPulse("Savepreset", label="Save Preset")

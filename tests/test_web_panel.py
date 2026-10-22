@@ -145,3 +145,21 @@ def test_the_prompt_blend_adds_weighs_and_removes_prompts(page: Page, served: tu
     panel.get_by_role("button", name="Remove Prompt 1").click()
     wait_until(lambda: blend() == [("ice", 0.5)])
     expect(panel.get_by_role("button", name="Remove Prompt 1")).to_be_disabled()  # a blend keeps one Prompt
+
+
+def test_the_temporal_coherence_switch_follows_every_control_surface(
+    browser: Browser, page: Page, served: tuple[Runtime, MemorySink, str]
+):
+    runtime = served[0]
+    switch = page.get_by_role("switch", name="Temporal Coherence")
+    expect(switch).to_be_checked()
+
+    switch.click()
+    wait_until(lambda: runtime.settings()[0].temporal_coherence is False)
+    expect(switch).not_to_be_checked()
+
+    other = browser.new_page()  # another Control Surface
+    other.goto(served[2])
+    other.get_by_role("switch", name="Temporal Coherence").click()
+    expect(switch).to_be_checked()
+    other.close()

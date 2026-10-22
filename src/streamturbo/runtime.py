@@ -200,6 +200,8 @@ class Runtime:
                 self._core.set_seed(self._settings.seed)
             if self._settings.strength != self._strength.target:
                 self._strength.move_to(self._settings.strength, self._settings.strength_glide)
+            if _picture(self._settings) != _picture(previous):
+                self._core.forget_previous()  # an unrelated picture: nothing to smooth with or lean on
         self._choose_backend()
 
     def _choose_backend(self) -> None:
@@ -366,7 +368,9 @@ class Runtime:
         gen = settings.generation
         timing = _Timing(device)
         strength = self._strength.value()
-        result = self._core.generate(image, strength, gen.width, gen.height, settings.temporal_smoothing)
+        result = self._core.generate(
+            image, strength, gen.width, gen.height, settings.temporal_smoothing, settings.temporal_coherence
+        )
         out, fmt = settings.output, self._sink_format
         packed = imageops.to_bytes((result.float() + 1) / 2, out.width, out.height, fmt)
         host = host_buffer(packed.numel())
@@ -398,6 +402,11 @@ class Runtime:
             finally:
                 if sink is not None:
                     sink.close()
+
+
+def _picture(settings: Settings) -> tuple[object, ...]:
+    """What makes Input Frames a different picture: another Source, or another mapping onto the Generation."""
+    return settings.source, settings.generation, settings.fit_mode
 
 
 def _blend(settings: Settings) -> list[tuple[str, float]]:

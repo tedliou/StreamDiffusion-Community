@@ -360,3 +360,39 @@ def test_a_tablet_with_the_token_loads_the_whole_panel(rig: Rig):
         assert tablet.open(f"{base}/{script}", timeout=5).status == 200
     finally:
         web.stop()
+
+
+def test_temporal_coherence_is_a_live_switch_on_every_control_surface(rig: Rig):
+    fields = {field["path"]: field for field in rig.panel().hello["schema"]}
+    assert fields["temporal_coherence"] == {
+        "path": "temporal_coherence",
+        "class": "live",
+        "type": "boolean",
+        "default": True,
+    }
+
+    rig.osc_send("/streamturbo/temporal_coherence", 0.0)  # a TouchDesigner toggle sends 0 or 1, as a float
+    wait_until(lambda: rig.runtime.settings()[0].temporal_coherence is False)
+    (sent,) = rig.osc_in.wait_for("/streamturbo/temporal_coherence")
+    assert (sent, type(sent)) == (0, int)  # sent back as 0 or 1
+
+    rig.osc_send("/streamturbo/preset/recall", "Glass")
+    wait_until(lambda: rig.runtime.settings()[0].temporal_coherence is True)
+
+
+def test_settings_and_presets_saved_before_temporal_coherence_load_with_it_on(tmp_path: Path):
+    older = tmp_path / "last-settings.toml"
+    older.write_text("strength = 0.5\ntemporal_smoothing = 0.2\n", encoding="utf-8")
+
+    assert Settings.load(older).temporal_coherence is True
+
+
+def test_a_preset_keeps_temporal_coherence(rig: Rig):
+    panel = rig.panel()
+    panel.request("update", changes={"temporal_coherence": False})
+    assert panel.request("preset.save", name="Steady off")["ok"]
+    panel.request("update", changes={"temporal_coherence": True})
+    assert panel.request("preset.recall", name="Steady off")["ok"]
+
+    wait_until(lambda: rig.runtime.settings()[0].temporal_coherence is False)
+    panel.close()

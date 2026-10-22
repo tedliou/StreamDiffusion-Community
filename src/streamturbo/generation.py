@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 
 import torch
 
-from streamturbo.backends import Backend
+from streamturbo.backends import Backend, CoherentUnet, Features
 
 MAX_TIMESTEP = 999
 
@@ -62,6 +62,8 @@ class GenerationCore:
         self._seed: int | None = None
         self._latent_noise: torch.Tensor | None = None
         self._previous: torch.Tensor | None = None  # the last Generation's latents, for Temporal Smoothing
+        self._features: Features | None = None  # the last Generation's self-attention keys and values, for
+        # Temporal Coherence
 
     @torch.inference_mode()
     def set_prompts(self, prompts: Sequence[tuple[str, float]], transition: float = 0.0) -> None:
@@ -99,32 +101,49 @@ class GenerationCore:
             self._latent_noise = None
 
     def forget_previous(self) -> None:
-        """Start Temporal Smoothing afresh: the next Generation blends with nothing."""
-        self._previous = None
+        """Start Temporal Smoothing and Temporal Coherence afresh: the next Generation leans on nothing."""
+        self._previous = self._features = None
 
     @torch.inference_mode()
     def generate(
-        self, image: torch.Tensor | None, strength: float, width: int, height: int, smoothing: float = 0.0
+        self,
+        image: torch.Tensor | None,
+        strength: float,
+        width: int,
+        height: int,
+        smoothing: float = 0.0,
+        coherence: bool = False,
     ) -> torch.Tensor:
         """One Generation. `image` is (1, 3, H, W) in [-1, 1], or None for txt2img.
 
         Strength 0 passes the image through the tiny VAE only; Strength 1, or no image, is txt2img.
-        Temporal Smoothing keeps `smoothing` (0-1) of the previous Generation's latents.
+        Temporal Smoothing keeps `smoothing` (0-1) of the previous Generation's latents. Temporal Coherence lets
+        the UNet attend to the previous Generation's features, on a Backend that has it.
         """
         if self._blend is None or self._seed is None:
             raise RuntimeError("set_prompts() and set_seed() must be called before generate()")
-        latents = self._predict_latents(image, strength, width, height, self._blend.value().to(self.backend.dtype))
+        if not coherence:
+            self._features = None
+        embeds = self._blend.value().to(self.backend.dtype)
+        latents = self._predict_latents(image, strength, width, height, embeds, coherence)
         previous, self._previous = self._previous, latents
         if smoothing > 0 and previous is not None and previous.shape == latents.shape:
             latents = self._previous = torch.lerp(latents, previous, smoothing)
         return self.backend.decode(latents)
 
     def _predict_latents(
-        self, image: torch.Tensor | None, strength: float, width: int, height: int, prompt_embeds: torch.Tensor
+        self,
+        image: torch.Tensor | None,
+        strength: float,
+        width: int,
+        height: int,
+        prompt_embeds: torch.Tensor,
+        coherence: bool,
     ) -> torch.Tensor:
         """The clean latents one UNet step predicts."""
         backend = self.backend
         if image is not None and strength <= 0:
+            self._features = None  # no UNet ran, so the last features belong to an older picture
             return backend.encode(image).float()
         noise = self._noise_for(width, height)
         t = timestep_for(1.0 if image is None else strength)
@@ -133,7 +152,12 @@ class GenerationCore:
             noisy = noise_level * noise
         else:
             noisy = signal * backend.encode(image).float() + noise_level * noise
-        eps = backend.unet(noisy, self._timesteps[t : t + 1], prompt_embeds).float()
+        timestep = self._timesteps[t : t + 1]
+        if coherence and isinstance(backend, CoherentUnet):
+            eps, self._features = backend.coherent_unet(noisy, timestep, prompt_embeds, self._features)
+        else:
+            eps = backend.unet(noisy, timestep, prompt_embeds)
+        eps = eps.float()
         return (noisy - noise_level * eps) / signal
 
     def _noise_for(self, width: int, height: int) -> torch.Tensor:

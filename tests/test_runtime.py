@@ -421,3 +421,98 @@ def test_a_non_square_generation_resolution_fits_and_upscales(small_settings, ne
     centre, edges = image[:, 384:640].mean(dim=(0, 1)), torch.cat((image[:, :128], image[:, -128:]), dim=1)
     assert all(abs(a - b) <= 3 for a, b in zip(centre.tolist(), RED, strict=True))
     assert (edges.mean().item() < 3) if bars else (edges.mean(dim=(0, 1)) - torch.tensor(RED)).abs().max() <= 3
+
+
+def coherence_outputs(small_settings, net, coherence: bool, count: int = 8) -> list:
+    """Like `alternating_outputs`, at a Strength where the UNet runs, so Temporal Coherence can act."""
+    return alternating_outputs(small_settings, net, count, strength=0.5, temporal_coherence=coherence)
+
+
+def test_temporal_coherence_off_follows_every_input_frame(small_settings, net):
+    frames = coherence_outputs(small_settings, net, coherence=False)
+
+    assert all(torch.equal(a.data, b.data) for a, b in zip(frames, frames[2:], strict=False))  # same colour: same
+    assert flicker(frames) > 20
+
+
+def test_temporal_coherence_leans_each_generation_on_the_previous_one(small_settings, net):
+    off = flicker(coherence_outputs(small_settings, net, coherence=False)[2:])
+    on = flicker(coherence_outputs(small_settings, MemoryTransports(), coherence=True)[2:])
+
+    assert on < off * 0.8
+
+
+def first_output(settings, colour: tuple[int, int, int]):
+    """The first Output Frame a fresh Runtime makes from one Input Frame: no earlier Generation to lean on."""
+    net = MemoryTransports()
+    source, sink = net.add_source(settings.source.name), net.sink(settings.sink)
+    with Runtime(settings, FakeBackend(), net):
+        source.push(input_frame(solid(320, 240, colour)))
+        return sink.wait_for(lambda f: True)
+
+
+def test_temporal_coherence_starts_afresh_on_another_source(small_settings, net):
+    settings = small_settings.merged({"strength": 0.5, "temporal_coherence": True})
+    cam, cam2, sink = net.add_source("cam"), net.add_source("cam2"), net.sink(settings.sink)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        for seq in range(3):
+            cam.push(input_frame(solid(320, 240, BLUE)))
+            sink.wait_for(lambda f, seq=seq: f.input_seq == seq)
+        version = runtime.update(source={"name": "cam2"})
+        time.sleep(0.1)
+        cam2.push(input_frame(solid(320, 240, RED)))
+        switched = sink.wait_for(lambda f: f.settings_version == version)
+
+    assert torch.equal(switched.data, first_output(settings.merged({"source": {"name": "cam2"}}), RED).data)
+
+
+def test_turning_temporal_coherence_off_applies_to_the_next_output_frame(small_settings, net):
+    settings = small_settings.merged({"strength": 0.5, "temporal_coherence": True})
+    source, sink = net.add_source("cam"), net.sink(settings.sink)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        for seq in range(3):
+            source.push(input_frame(solid(320, 240, BLUE)))
+            sink.wait_for(lambda f, seq=seq: f.input_seq == seq)
+        version = runtime.update(temporal_coherence=False)
+        time.sleep(0.1)
+        source.push(input_frame(solid(320, 240, RED)))
+        after = sink.wait_for(lambda f: f.settings_version == version)
+
+    assert torch.equal(after.data, first_output(settings, RED).data)
+
+
+def test_temporal_coherence_starts_afresh_on_another_generation_resolution(small_settings, net):
+    settings = small_settings.merged({"strength": 0.5, "temporal_coherence": True})
+    source, sink = net.add_source("cam"), net.sink(settings.sink)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        for seq in range(3):
+            source.push(input_frame(solid(320, 240, BLUE)))
+            sink.wait_for(lambda f, seq=seq: f.input_seq == seq)
+        version = runtime.update(generation={"width": 320, "height": 256})
+        time.sleep(0.1)
+        source.push(input_frame(solid(320, 240, RED)))
+        resized = sink.wait_for(lambda f: f.settings_version == version)
+
+    assert torch.equal(
+        resized.data, first_output(settings.merged({"generation": {"width": 320, "height": 256}}), RED).data
+    )
+
+
+def test_temporal_coherence_leans_on_nothing_after_strength_zero(small_settings, net):
+    """At Strength 0 the UNet does not run, so there is nothing current to lean on afterwards."""
+    settings = small_settings.merged({"strength": 0.5, "temporal_coherence": True})
+    source, sink = net.add_source("cam"), net.sink(settings.sink)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        for seq in range(3):
+            source.push(input_frame(solid(320, 240, BLUE)))
+            sink.wait_for(lambda f, seq=seq: f.input_seq == seq)
+        runtime.update(strength=0.0)
+        time.sleep(0.1)
+        source.push(input_frame(solid(320, 240, RED)))
+        sink.wait_for(lambda f: f.input_seq == 3)
+        version = runtime.update(strength=0.5)
+        time.sleep(0.1)
+        source.push(input_frame(solid(320, 240, RED)))
+        after = sink.wait_for(lambda f: f.settings_version == version)
+
+    assert torch.equal(after.data, first_output(settings, RED).data)
