@@ -35,6 +35,6 @@ class Upscaler(nn.Module):
 def load(weights: Path, device: torch.device, dtype: torch.dtype) -> Upscaler:
     state = torch.load(weights, map_location="cpu", weights_only=True)
     state = state.get("params_ema", state.get("params", state))
-    upscaler = Upscaler()
-    upscaler.load_state_dict(state)  # the release names its layers body.0 ... body.33, as this Sequential does
-    return upscaler.to(device, dtype).eval()
+    network = Upscaler()
+    network.load_state_dict(state)  # the release names its layers body.0 ... body.33, as this Sequential does
+    return network.to(device, dtype).eval()

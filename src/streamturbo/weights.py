@@ -43,5 +43,5 @@ def _sha256(path: Path) -> str:
 
 
 def fetch_all(spec: ModelSpec, cache_dir: Path | None = None) -> tuple[Path, Path, Path]:
-    """Return the model and tiny VAE snapshot folders, and the Upscaler's weights file."""
+    """Return the model and tiny VAE snapshot folders (in `cache_dir` when given), and the Upscaler's weights file."""
     return fetch(spec.model, cache_dir), fetch(spec.tiny_vae, cache_dir), fetch_file(UPSCALER)

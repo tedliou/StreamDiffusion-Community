@@ -26,7 +26,7 @@ export const settingText: Record<string, { label: string; help?: string; unit?: 
   },
   upscaler: {
     label: "Upscaler",
-    help: "Enlarges Output Frames bigger than the Generation Resolution with a small AI model that adds edges and texture, instead of plain resizing. Costs about 15 ms per frame at 512×512 with TensorRT; set the Output Resolution to 2× or 4× the Generation Resolution.",
+    help: "Enlarges Output Frames bigger than the Generation Resolution with a small AI model that adds edges and texture, instead of plain resizing. Adds Generation Time: about 24 ms per frame at 512×512 on an RTX 3070. Set the Output Resolution to 2× or 4× the Generation Resolution.",
   },
   seed: { label: "Seed", help: "Fixes the noise. Changing Strength never re-rolls it." },
   "source.transport": { label: "Transport" },
