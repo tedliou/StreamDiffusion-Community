@@ -40,10 +40,23 @@ start.cmd
 
 ## `streamturbo doctor`
 
-回報顯示卡名稱、算力、VRAM、驅動程式版本、目前與預設的功率上限、torch 與 CUDA 版本，以及 NDI 和 Spout 是否可用。環境有問題時結束代碼為 1。
+回報顯示卡名稱、算力、VRAM、驅動程式版本、目前與預設的功率上限、torch、CUDA 與 TensorRT 版本、TensorRT Engine 是否已建好，以及 NDI 和 Spout 是否可用。環境有問題時結束代碼為 1。
 
 ```bat
 .venv\Scripts\streamturbo doctor
+```
+
+## TensorRT Engine
+
+StreamTurbo 用 TensorRT 加速 UNet 和 tiny VAE。Engine 只能在建置它的顯示卡與 TensorRT 版本上執行，所以不隨專案發佈，而是在這台電腦上建置一次，存在專案資料夾的 `engines\`（不進 git）。
+
+- 第一次 `streamturbo run` 時先用 PyTorch 輸出，同時在背景建置 Engine（約 4 分鐘），建好後自動切換。Web Panel 的 Backend 欄會顯示建置進度。
+- Engine 依模型版本、元件、解析度範圍（每邊 256–1024）、顯示卡、算力與 TensorRT 版本分開快取；更換顯示卡或升級 TensorRT 會自動重建，不會載入不相容的 Engine。
+- 建置或載入失敗時繼續用 PyTorch 輸出，並在 Web Panel 顯示原因。
+- 演出前可以先建好：
+
+```bat
+.venv\Scripts\streamturbo build-engines
 ```
 
 ## `streamturbo run`
@@ -91,10 +104,16 @@ fps = 30               # NDI 宣告的影格率
 width = 1024
 height = 768
 
-[output]               # 輸出解析度，可與生成解析度不同
+[output]               # 輸出解析度，可與生成解析度不同，在 GPU 上放大
 width = 1024
 height = 768
+
+[similar_frame_skip]   # 靜態畫面時重送上一格，不重新生成，以降低功耗
+threshold = 0.0        # 輸入變化小於這個值（0–1）就跳過；0 表示關閉
+max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢的變化仍會出現
 ```
+
+`backend` 預設 `"auto"`：先用 PyTorch 輸出，背景建好 TensorRT Engine 後自動切換。設成 `"pytorch"` 可排除 TensorRT 以便診斷問題。
 
 ### Settings 的三種類別
 
@@ -102,9 +121,9 @@ height = 768
 
 | 類別 | 欄位 | 套用方式 |
 |---|---|---|
-| Live | `prompt`、`strength`、`seed` | 下一格就生效，輸出不中斷 |
+| Live | `prompt`、`strength`、`seed`、`similar_frame_skip.*` | 下一格就生效，輸出不中斷 |
 | Reset | `source.*`、`sink.*`、`generation.*`、`output.*`、`fit_mode` | 重新開啟 Source 或 Sink、重配緩衝區，輸出會停頓一下 |
-| Rebuild | （目前沒有） | 需要重建模型 |
+| Rebuild | `backend` | 需要的 TensorRT Engine 建好後才完全生效；建置期間由 PyTorch 繼續輸出 |
 
 一次送出的多個變更會一起套用，不會出現只套用一半的影格。不合法的值會被拒絕，並回報原因，正在跑的 Settings 不受影響。
 
@@ -141,20 +160,25 @@ StreamTurbo 在 7000 埠接收 OSC，並把變更和狀態回報到 127.0.0.1:70
 | 收 | `/streamturbo/preset/recall`、`/streamturbo/preset/save` | Preset 名稱 |
 | 收 | `/streamturbo/sync` | 無；要求重送所有 Settings |
 | 送 | 與上面相同的 Setting 位址 | 任何 Control Surface 改了 Settings 時送出 |
-| 送 | `/streamturbo/status/source_state`、`throughput_fps`、`generation_ms_p50`、`settings_version`、`error` | 每 0.5 秒 |
+| 送 | `/streamturbo/status/source_state`、`throughput_fps`、`generation_ms_p50`、`settings_version`、`error`、`frames_skipped`、`backend`、`engines/state`、`engines/progress` | 每 0.5 秒 |
 | 送 | `/streamturbo/error` | 被拒絕的訊息與原因 |
 
 Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看得到。
 
 ## `streamturbo bench`
 
-用內建測試畫面跑 Glass 工作負載，量測每秒格數、生成時間、峰值 VRAM 和平均功耗，結果寫到 `output\bench\bench-日期-時間.json`，最後一格存成同名 PNG。
+用內建測試畫面跑 Glass 工作負載，量測每秒格數、生成時間、峰值 VRAM 和平均功耗，結果寫到 `output\bench\bench-日期-時間.json`，最後一格存成同名 PNG。每筆結果都記下當時的 GPU 功率上限。
 
 ```bat
 .venv\Scripts\streamturbo bench --frames 120
 ```
 
-參考值（RTX 3070 功率上限 162 W，1024×768）：約 5.3 fps，生成時間 p50 188 ms，峰值 VRAM 2.8 GiB。
+- `--backend pytorch`：量 PyTorch Backend（預設量 TensorRT，缺 Engine 時先建置）。
+- `--precision int8`：量 INT8 UNet，需要先 `uv sync --group int8` 安裝 ModelOpt。
+- `--input 圖片`：用自己的圖片當 Input Frame。
+- `--matrix`：跑品質/速度矩陣：PyTorch 基準，加上 TensorRT FP16/INT8 × 三種 Generation Resolution × 兩種 Output Resolution，每個選項存一張 PNG，結果寫到 `output\bench\matrix-日期-時間\`。
+
+參考值（RTX 3070 功率上限 162 W，Glass 1024×768）：TensorRT 約 8.2 fps，生成時間 p50 121 ms，峰值 VRAM 5.5 GiB；PyTorch 約 4.5 fps，p50 222 ms。
 
 ## TouchDesigner 連接
 

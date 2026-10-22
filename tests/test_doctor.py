@@ -32,7 +32,7 @@ def run_doctor(capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
 def test_doctor_reports_every_section(capsys):
     code, out = run_doctor(capsys)
 
-    for heading in ("GPU", "Libraries", "Transports", "torch", "CUDA (torch)", "NDI", "Spout"):
+    for heading in ("GPU", "Libraries", "Transports", "torch", "CUDA (torch)", "TensorRT", "Engines", "NDI", "Spout"):
         assert heading in out
     assert out.rstrip().endswith("OK" if code == 0 else "NOT READY")
 

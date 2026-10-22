@@ -3,6 +3,7 @@ import { sourceStateText, text } from "../strings";
 
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 1 });
 const whole = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const percent = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 0 });
 
 /** Health at a glance: every value is text, so no state is signalled by colour alone. */
 export function StatusBar({ status, applying }: { status: Status | null; applying: boolean }) {
@@ -30,15 +31,26 @@ export function StatusBar({ status, applying }: { status: Status | null; applyin
             : "—"}
         </Metric>
         <Metric label={text.metrics.dropped}>{status ? whole.format(status.dropped_frames) : "—"}</Metric>
+        <Metric label={text.metrics.skipped}>{status ? whole.format(status.frames_skipped) : "—"}</Metric>
         <Metric label={text.metrics.vram}>{vram}</Metric>
         <Metric label={text.metrics.power}>
           {status?.power_w != null ? `${whole.format(status.power_w)} W` : "—"}
         </Metric>
-        <Metric label={text.metrics.backend}>{status?.backend ?? "—"}</Metric>
+        <Metric label={text.metrics.backend}>
+          {status?.backend ?? "—"}
+          {status?.engines.state === "building" && (
+            <span className="engines">{text.metrics.building(percent.format(status.engines.progress))}</span>
+          )}
+        </Metric>
       </dl>
       <p className="status-line" role="status" aria-live="polite">
         {applying && <span className="applying">{text.metrics.applying}</span>}
         {status?.error && <span className="status-error">{status.error}</span>}
+        {status?.engines.state === "failed" && (
+          <span className="status-error">
+            {text.metrics.engineFailed}: {status.engines.detail}
+          </span>
+        )}
       </p>
     </section>
   );

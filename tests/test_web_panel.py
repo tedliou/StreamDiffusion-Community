@@ -1,11 +1,13 @@
 """Seam 2: the committed Web Panel build against a fake-Backend Runtime, driven in a real browser (Edge)."""
 
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import Browser, Page, expect, sync_playwright
 
+from streamturbo.backends import BestBackend
 from streamturbo.control import Control
 from streamturbo.control.web import WebServer
 from streamturbo.presets import PresetStore
@@ -91,3 +93,32 @@ def test_a_preset_round_trips(page: Page, served: tuple[Runtime, MemorySink, str
 
     expect(strength).to_have_value("0.3")
     wait_until(lambda: runtime.settings()[0].strength == 0.3)
+
+
+def test_engine_build_progress_shows_until_the_fast_backend_takes_over(
+    browser: Browser, small_settings: Settings, net: MemoryTransports, tmp_path: Path
+):
+    ready = threading.Event()
+
+    def build(progress):
+        progress(0.4, "unet")
+        ready.wait()
+        return FakeBackend(name="tensorrt")
+
+    net.add_source("cam", repeat_fps=30).push(input_frame(solid(320, 240, RED)))
+    runtime = Runtime(small_settings, BestBackend(FakeBackend(name="pytorch"), build), net)
+    web = WebServer(Control(runtime, PresetStore(tmp_path / "presets"), net), port=0)
+    with runtime:
+        web.start()
+        page = browser.new_page()
+        try:
+            page.goto(web.url)
+            backend = page.locator(".metric", has_text="Backend")
+            expect(backend).to_contain_text("pytorch")
+            expect(backend).to_contain_text("Building Engines 40%")
+            ready.set()
+            expect(backend).to_contain_text("tensorrt")
+            expect(backend).not_to_contain_text("Building")
+        finally:
+            page.close()
+            web.stop()

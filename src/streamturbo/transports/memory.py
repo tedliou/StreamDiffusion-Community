@@ -65,11 +65,12 @@ class MemorySource:
 
 
 class MemorySink:
-    """Keeps every Output Frame it is sent."""
+    """Keeps every Output Frame it is sent, or only the latest `keep` (for long runs such as `bench`)."""
 
     def __init__(self, fmt: PixelFormat = PixelFormat.RGBA) -> None:
         self.format = fmt
         self.frames: list[OutputFrame] = []
+        self.keep: int | None = None
         self._arrived = threading.Condition()
 
     def open(self) -> None:
@@ -78,6 +79,8 @@ class MemorySink:
     def send(self, frame: OutputFrame) -> None:
         with self._arrived:
             self.frames.append(frame)
+            if self.keep is not None:
+                del self.frames[: -self.keep]
             self._arrived.notify_all()
 
     def close(self) -> None:

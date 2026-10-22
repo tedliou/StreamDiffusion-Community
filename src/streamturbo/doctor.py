@@ -38,6 +38,8 @@ class Report:
     torch_version: str | None = None
     torch_cuda: str | None = None
     cuda_available: bool = False
+    tensorrt_version: str | None = None
+    engines: str = "unknown"  # which TensorRT Engines are cached for this GPU
     transports: list[TransportStatus] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -51,6 +53,7 @@ def collect() -> Report:
     report = Report(python=platform.python_version())
     _collect_gpus(report)
     _collect_torch(report)
+    _collect_engines(report)
     _collect_transports(report)
     return report
 
@@ -111,6 +114,29 @@ def _collect_torch(report: Report) -> None:
         report.problems.append("PyTorch cannot use CUDA on this machine.")
 
 
+def _collect_engines(report: Report) -> None:
+    try:
+        report.tensorrt_version = importlib.metadata.version("tensorrt-cu13")
+    except importlib.metadata.PackageNotFoundError:
+        report.warnings.append("TensorRT is not installed: the slower PyTorch Backend will be used.")
+        return
+    if not report.cuda_available:
+        return
+    try:
+        from streamturbo.backends.tensorrt import COMPONENTS, missing_engines
+        from streamturbo.model_spec import SD_TURBO
+        from streamturbo.paths import engines_dir
+
+        missing = missing_engines(engines_dir(), SD_TURBO)
+    except Exception as exc:
+        report.warnings.append(f"TensorRT cannot be loaded ({exc}): the slower PyTorch Backend will be used.")
+        return
+    if not missing:
+        report.engines = f"all {len(COMPONENTS)} built in {engines_dir()}"
+    else:
+        report.engines = f"{', '.join(missing)} not built yet (built on first run, or `streamturbo build-engines`)"
+
+
 def _collect_transports(report: Report) -> None:
     report.transports = [
         _probe("NDI", "cyndilib", lambda module: module.get_ndi_version()),
@@ -148,6 +174,8 @@ def render(report: Report) -> str:
         f"  python            {report.python}",
         f"  torch             {report.torch_version or 'not installed'}",
         f"  CUDA (torch)      {report.torch_cuda or '-'} ({'available' if report.cuda_available else 'unavailable'})",
+        f"  TensorRT          {report.tensorrt_version or 'not installed'}",
+        f"  Engines           {report.engines}",
         "",
         "Transports",
     ]

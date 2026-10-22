@@ -255,6 +255,8 @@ def test_osc_reports_errors_and_status(rig: Rig):
     assert "strength" in error
     assert rig.runtime.settings()[0].strength == 0.68
     assert rig.osc_in.wait_for("/streamturbo/status/source_state") in (("live",), ("waiting",))
+    assert rig.osc_in.wait_for("/streamturbo/status/backend") == ("fake",)
+    assert rig.osc_in.wait_for("/streamturbo/status/engines/state") == ("off",)
 
 
 def test_status_and_preview_frames_are_pushed(rig: Rig):

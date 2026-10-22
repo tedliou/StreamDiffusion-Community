@@ -12,6 +12,7 @@ const GROUPS: { key: keyof typeof groupText; paths: string[] }[] = [
   { key: "sink", paths: ["sink.transport", "sink.name", "sink.fps"] },
   { key: "resolution", paths: ["generation.width", "generation.height", "fit_mode"] },
   { key: "output", paths: ["output.width", "output.height"] },
+  { key: "performance", paths: ["similar_frame_skip.threshold", "similar_frame_skip.max_skips", "backend"] },
 ];
 
 type Theme = "system" | "light" | "dark";
