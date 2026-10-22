@@ -1,8 +1,25 @@
 // Every piece of UI text, so a translation is one file (spec #2: UI text is English, kept in one string table).
 
 export const settingText: Record<string, { label: string; help?: string; unit?: string }> = {
-  prompt: { label: "Prompt", help: "The text that steers Generation. Press Ctrl+Enter or leave the field to apply." },
+  prompts: {
+    label: "Prompt Blend",
+    help: "Weighted Prompts used together as one; each weight counts relative to the total. A new Prompt starts at weight 0. Press Ctrl+Enter or leave a Prompt to apply it.",
+  },
+  prompt_transition: {
+    label: "Prompt Transition",
+    unit: "s",
+    help: "How long a Prompt Blend change takes to blend in. 0 switches at once.",
+  },
   strength: { label: "Strength", help: "0 keeps the Input Frame, 1 ignores it." },
+  strength_glide: {
+    label: "Strength Glide",
+    unit: "s",
+    help: "How long Strength takes to reach a new value, from any Control Surface. 0 jumps.",
+  },
+  temporal_smoothing: {
+    label: "Temporal Smoothing",
+    help: "How much of the previous Output Frame each new one keeps, to reduce flicker. 0 turns it off; high values trail behind fast motion.",
+  },
   seed: { label: "Seed", help: "Fixes the noise. Changing Strength never re-rolls it." },
   "source.transport": { label: "Transport" },
   "source.name": { label: "Name", help: "Leave empty to use the first visible sender." },
@@ -98,7 +115,13 @@ export const text = {
   refreshingSources: "Refreshing…",
   noSources: "No senders visible",
   randomSeed: "Random",
-  promptApply: "Apply Prompt",
+  promptAdd: "Add Prompt",
+  promptRemove: "Remove",
+  promptWeight: "Weight",
+  promptPlaceholder: "Describe the look",
+  promptLabel: (n: number) => `Prompt ${n}`,
+  promptWeightLabel: (n: number) => `Prompt ${n} Weight`,
+  promptRemoveLabel: (n: number) => `Remove Prompt ${n}`,
   presets: {
     saveLabel: "New Preset Name",
     savePlaceholder: "Evening Show…",

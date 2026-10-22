@@ -5,7 +5,7 @@
 StreamTurbo 是給 TouchDesigner 使用的即時影像生成 Runtime，只支援 Windows。它從 NDI 或 Spout 接收影像，在 NVIDIA 顯示卡上用 sd-turbo 單步重新生成每一格，再經由 NDI 或 Spout 送回去。
 
 > [!NOTE]
-> 開發中。目前完成的是 M2：經 NDI 或 Spout 收送影像並即時生成，用 Web Panel、OSC 或 TouchDesigner 範例元件即時調整 Settings，並以 Preset 存取外觀。後續進度請見 [spec #2](https://github.com/tedliou/StreamTurbo/issues/2)。
+> 開發中。目前完成的是 M4：經 NDI 或 Spout 收送影像並即時生成（TensorRT 加速），用 Web Panel、OSC 或 TouchDesigner 範例元件即時調整 Settings，以 Preset 存取外觀，並有 Temporal Smoothing、Prompt Blend 與平滑的即時調整。後續進度請見 [spec #2](https://github.com/tedliou/StreamTurbo/issues/2)。
 
 ## 需求
 
@@ -86,9 +86,15 @@ StreamTurbo 用 TensorRT 加速 UNet 和 tiny VAE。Engine 只能在建置它的
 設定檔是 TOML，沒寫的欄位使用 Glass Preset 的預設值。頂層欄位要寫在所有 `[表格]` 之前：
 
 ```toml
-prompt = "a glass jellyfish, studio lighting"   # 提示詞
-strength = 0.68        # 0 只做編解碼，1 完全依提示詞生成（不參考輸入）
+prompts = [                                    # Prompt Blend：一到多個帶權重的提示詞，混合成一個
+  { text = "a glass jellyfish, studio lighting", weight = 1.0 },
+  { text = "neon city at night", weight = 0.3 },  # 權重相對於總和；0 表示暫不使用
+]
+prompt_transition = 1.0  # 換 Prompt Blend 時花幾秒漸變過去；0 表示立刻切換
+strength = 0.68        # 0 只做編解碼，1 完全依提示詞生成（不參考輸入）；以 0.01 為單位
+strength_glide = 0.25  # strength 改變時花幾秒滑到新值，所有 Control Surface 都一樣；0 表示直接跳過去
 seed = 2               # 固定雜訊；調整 strength 不會改變雜訊
+temporal_smoothing = 0.2  # 每格保留多少上一格（0–0.95）以減少閃爍；0 表示關閉，太高時快速移動會拖影
 fit_mode = "fill"      # 輸入比例不同時：fill 裁切填滿、fit 加黑邊、stretch 拉伸
 
 [source]
@@ -113,6 +119,10 @@ threshold = 0.0        # 輸入變化小於這個值（0–1）就跳過；0 表
 max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢的變化仍會出現
 ```
 
+只有一個提示詞時也可以寫 `prompt = "..."`，舊版的設定檔和 Preset 會自動轉成只有這一個提示詞的 Prompt Blend。
+
+生成解析度不必是正方形，例如 1024×576（16:9）。輸入比例不同時依 `fit_mode` 處理，輸出解析度可以再放大，例如 1920×1080。
+
 `backend` 預設 `"auto"`：先用 PyTorch 輸出，背景建好 TensorRT Engine 後自動切換。設成 `"pytorch"` 可排除 TensorRT 以便診斷問題。
 
 ### Settings 的三種類別
@@ -121,7 +131,7 @@ max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢�
 
 | 類別 | 欄位 | 套用方式 |
 |---|---|---|
-| Live | `prompt`、`strength`、`seed`、`similar_frame_skip.*` | 下一格就生效，輸出不中斷 |
+| Live | `prompts`、`prompt_transition`、`strength`、`strength_glide`、`seed`、`temporal_smoothing`、`similar_frame_skip.*` | 下一格就開始生效，輸出不中斷；`prompts` 和 `strength` 依設定的時間漸變 |
 | Reset | `source.*`、`sink.*`、`generation.*`、`output.*`、`fit_mode` | 重新開啟 Source 或 Sink、重配緩衝區，輸出會停頓一下 |
 | Rebuild | `backend` | 需要的 TensorRT Engine 建好後才完全生效；建置期間由 PyTorch 繼續輸出 |
 
@@ -132,6 +142,7 @@ max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢�
 `streamturbo run` 啟動後在瀏覽器開啟 <http://127.0.0.1:8765/>。畫面依 Runtime 的 Settings 自動產生，可以：
 
 - 即時調整每個 Setting（Live 的滑桿拖曳時就生效，Reset 的滑桿放開才套用）
+- 編輯 Prompt Blend：新增、移除提示詞並調整各自的權重。新增的提示詞權重是 0，不會立刻改變畫面；改完文字後按 Ctrl+Enter 或離開輸入框才套用
 - 從清單挑選目前看得到的 NDI 或 Spout 來源
 - 看輸入與輸出的預覽、來源狀態、每秒格數、生成時間、VRAM 與顯示卡功耗
 - 儲存、套用、重新命名、刪除 Preset
@@ -143,7 +154,7 @@ max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢�
 
 ## Preset
 
-Preset 是一組外觀：提示詞、strength、seed、fit mode、生成解析度與輸出解析度，不含 Source 和 Sink，所以換場地也能直接套用。
+Preset 是一組外觀：Prompt Blend、strength、seed、Temporal Smoothing、漸變時間、fit mode、生成解析度與輸出解析度等，不含 Source、Sink 和 Backend，所以換場地也能直接套用。套用 Preset 時，提示詞和 strength 也會依設定的時間漸變過去。
 
 - 內建的 `Glass` 唯讀，放在程式內。
 - 自己存的 Preset 是 TOML 檔，放在專案資料夾的 `presets\`，可以直接複製或備份。名稱不分大小寫。
@@ -155,15 +166,18 @@ StreamTurbo 在 7000 埠接收 OSC，並把變更和狀態回報到 127.0.0.1:70
 
 | 方向 | 位址 | 值 |
 |---|---|---|
-| 收 | `/streamturbo/prompt`、`/streamturbo/strength`、`/streamturbo/seed` | 一個值 |
+| 收 | `/streamturbo/strength`、`/streamturbo/seed`、`/streamturbo/temporal_smoothing`、`/streamturbo/prompt_transition`…… | 一個值 |
+| 收 | `/streamturbo/prompts/0/text`、`/streamturbo/prompts/0/weight` | 依索引改 Prompt Blend 的某一項；用下一個索引（目前項數）會新增一項，權重預設 1 |
+| 收 | `/streamturbo/prompts` | 整個 Prompt Blend 的 JSON 字串，例如 `'[{"text": "ice", "weight": 1}]'`；要移除項目時用這個 |
+| 收 | `/streamturbo/prompt` | 一個提示詞，取代整個 Prompt Blend |
 | 收 | `/streamturbo/source/transport`、`/streamturbo/source/name`、`/streamturbo/generation/width`…… | 一個值，每個 Setting 都有 |
 | 收 | `/streamturbo/preset/recall`、`/streamturbo/preset/save` | Preset 名稱 |
 | 收 | `/streamturbo/sync` | 無；要求重送所有 Settings |
-| 送 | 與上面相同的 Setting 位址 | 任何 Control Surface 改了 Settings 時送出 |
+| 送 | 與上面相同的 Setting 位址，Prompt Blend 依索引送（`prompts/0/text`、`prompts/0/weight`……） | 任何 Control Surface 改了 Settings 時送出 |
 | 送 | `/streamturbo/status/source_state`、`throughput_fps`、`generation_ms_p50`、`settings_version`、`error`、`frames_skipped`、`backend`、`engines/state`、`engines/progress` | 每 0.5 秒 |
 | 送 | `/streamturbo/error` | 被拒絕的訊息與原因 |
 
-Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看得到。
+Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看得到。從 OSC 連續送 strength（例如 TouchDesigner 的 LFO）時，畫面會依 `strength_glide` 平滑地跟上，不會一格一格跳。
 
 ## `streamturbo bench`
 
@@ -197,7 +211,7 @@ Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看�
 **範例元件**：[`touchdesigner/StreamTurbo.tox`](touchdesigner/StreamTurbo.tox) 把上面的步驟包成一個元件，拖進專案即可使用。它的參數頁可以：
 
 - 選擇 Transport（NDI 或 Spout），同時切換送出、接收和 StreamTurbo 的 Source 與 Sink
-- 調整 Prompt、Strength、Seed，套用或儲存 Preset（經 OSC）
+- 調整 Prompt（Prompt Blend 的第一項）、Strength、Seed，套用或儲存 Preset（經 OSC）
 - 在 Status 頁看來源狀態、每秒格數和生成時間
 - 按 Measure Latency 量測 Round-trip Latency
 
@@ -210,7 +224,7 @@ Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看�
 | NDI | 555–579 ms | 433 ms | 694 ms |
 | Spout | 441 ms | 344 ms | 709 ms |
 
-這時生成約 230 ms 一格（約 4.4 fps），延遲大部分來自生成本身和等待中的影格。速度優化是下一個里程碑的工作。
+這是 M2（PyTorch Backend）時的量測，那時生成約 230 ms 一格（約 4.4 fps），延遲大部分來自生成本身和等待中的影格。改用 TensorRT 後的生成速度見 `streamturbo bench`。
 
 已知限制：Spout 沒有開啟 frame counting 時，StreamTurbo 無法分辨畫面是否更新。這時把 TouchDesigner 的 Spout Out 設為 inactive，狀態仍會顯示 `live`；刪除 Spout Out TOP 才會變成 `lost`。frame counting 是 Spout 的全系統設定（SpoutSettings 工具），StreamTurbo 不會改動它。
 
@@ -226,6 +240,11 @@ Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看�
 | `doctor` 顯示 NOT READY | 依照 PROBLEM 那幾行的說明處理 |
 | 狀態一直是 `waiting` | 用 `streamturbo run --list-sources` 確認來源名稱，NDI 另需確認防火牆允許 |
 | 每秒格數偏低 | 確認沒有其他程式占用顯示卡，並用 `doctor` 檢查功率上限 |
+| 輸出畫面閃爍 | 提高 `temporal_smoothing`（例如 0.3），或降低 `strength` |
+| 快速移動時有拖影 | 降低 `temporal_smoothing`，0 表示關閉 |
+| 改了提示詞或 strength 卻慢慢才變 | 這是 `prompt_transition` 和 `strength_glide` 的漸變；要立刻切換時設成 0 |
+| 新增的提示詞沒有作用 | 新增的提示詞權重是 0，把權重調高才會混進畫面 |
+| OSC 回報 `prompts: there is no item …` | 索引超過目前項數；只能改現有的項目，或用下一個索引新增 |
 
 ## 開發
 

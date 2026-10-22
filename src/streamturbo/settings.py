@@ -4,6 +4,7 @@ Every leaf field carries its class: Live applies on the next Output Frame, Reset
 buffers or Transports are rebuilt, Rebuild needs a new Engine.
 """
 
+import json
 import tomllib
 import typing
 from collections.abc import Mapping
@@ -11,17 +12,21 @@ from pathlib import Path
 from typing import Any, Literal, Self
 
 import annotated_types
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from streamturbo.model_spec import GLASS_PROMPT, GLASS_SIZE, GLASS_STRENGTH, SD_TURBO
 
 FitMode = Literal["fill", "fit", "stretch"]
 BackendChoice = Literal["auto", "pytorch"]  # auto: TensorRT once its Engines are built, PyTorch until then
 SettingClass = Literal["live", "reset", "rebuild"]
+MAX_PROMPTS = 32  # each distinct Prompt is encoded once; this only bounds what one update can ask for
 
 
-def _setting(kind: SettingClass, default: Any, **constraints: Any) -> Any:
-    return Field(default=default, json_schema_extra={"class": kind}, **constraints)
+def _setting(kind: SettingClass, default: Any, *, step: float | None = None, **constraints: Any) -> Any:
+    """A leaf Setting. `step` is the increment a control moves in, for floats that pydantic's multiple_of would
+    reject over rounding error; the field's validator does the rounding."""
+    extra: dict[str, Any] = {"class": kind} | ({"step": step} if step is not None else {})
+    return Field(default=default, json_schema_extra=extra, **constraints)
 
 
 class _Model(BaseModel):
@@ -60,17 +65,60 @@ class SimilarFrameSkip(_Model):
     max_skips: int = _setting("live", 30, ge=1, le=10000)  # then one Generation, so slow changes still appear
 
 
+class WeightedPrompt(_Model):
+    """One Prompt in a Prompt Blend; its weight counts relative to the total of all weights."""
+
+    text: str = _setting("live", GLASS_PROMPT, max_length=2000)
+    weight: float = _setting("live", 1.0, ge=0.0, le=10.0, step=0.01)
+
+    @field_validator("weight")
+    @classmethod
+    def _hundredths(cls, value: float) -> float:
+        return round(value, 2)
+
+
 class Settings(_Model):
     source: SourceSettings = SourceSettings()
     sink: SinkSettings = SinkSettings()
     generation: GenerationResolution = GenerationResolution()
     output: OutputResolution = OutputResolution()
     fit_mode: FitMode = _setting("reset", "fill")
-    prompt: str = _setting("live", GLASS_PROMPT, max_length=2000)
-    strength: float = _setting("live", GLASS_STRENGTH, ge=0.0, le=1.0)
+    prompts: list[WeightedPrompt] = _setting("live", [WeightedPrompt()], min_length=1, max_length=MAX_PROMPTS)
+    strength: float = _setting("live", GLASS_STRENGTH, ge=0.0, le=1.0, step=0.01)
+    strength_glide: float = _setting("live", 0.25, ge=0.0, le=10.0)  # seconds to reach a new Strength; 0 jumps
+    prompt_transition: float = _setting("live", 1.0, ge=0.0, le=30.0)  # seconds to blend into a new Prompt Blend
     seed: int = _setting("live", 2, ge=0, lt=2**31)  # OSC integers are 32-bit
+    # How much of the previous Generation each new one keeps, 0-0.95; 0 turns Temporal Smoothing off.
+    temporal_smoothing: float = _setting("live", 0.2, ge=0.0, le=0.95)  # 0.2: no visible trail behind a fast pan
     similar_frame_skip: SimilarFrameSkip = SimilarFrameSkip()
     backend: BackendChoice = _setting("rebuild", "auto")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _single_prompt(cls, values: Any) -> Any:
+        """`prompt = "..."` (older Presets, `/streamturbo/prompt`) is a Prompt Blend of that Prompt alone."""
+        if isinstance(values, Mapping) and "prompt" in values:
+            values = dict(values)
+            values["prompts"] = [{"text": values.pop("prompt"), "weight": 1.0}]
+        return values
+
+    @field_validator("prompts", mode="before")
+    @classmethod
+    def _prompts_from_json(cls, value: Any) -> Any:
+        """A whole Prompt Blend as one JSON string, for Control Surfaces that send only scalars (OSC)."""
+        return json.loads(value) if isinstance(value, str) else value
+
+    @field_validator("prompts")
+    @classmethod
+    def _some_weight(cls, value: list[WeightedPrompt]) -> list[WeightedPrompt]:
+        if not any(prompt.weight > 0 for prompt in value):
+            raise ValueError("at least one Prompt needs a weight above 0")
+        return value
+
+    @field_validator("strength")
+    @classmethod
+    def _hundredths(cls, value: float) -> float:
+        return round(value, 2)
 
     @classmethod
     def load(cls, path: Path) -> Self:
@@ -87,8 +135,27 @@ def _deep_merge(base: dict[str, Any], changes: Mapping[str, Any]) -> dict[str, A
     for key, value in changes.items():
         if isinstance(value, Mapping) and isinstance(merged.get(key), dict):
             merged[key] = _deep_merge(merged[key], value)  # pyright: ignore[reportArgumentType]
+        elif isinstance(value, Mapping) and isinstance(merged.get(key), list):
+            merged[key] = _merge_items(key, merged[key], value)
         else:
             merged[key] = value
+    return merged
+
+
+def _merge_items(key: str, items: list[Any], changes: Mapping[Any, Any]) -> list[Any]:
+    """Changes to a list by index, e.g. `{"1": {"text": "x"}}` from `prompts/1/text`; the next index appends."""
+    merged = list(items)
+    try:
+        indexed = sorted((int(index), change) for index, change in changes.items())
+    except ValueError:
+        raise ValueError(f"{key}: items are changed by index, e.g. {key}/0") from None
+    for index, change in indexed:
+        if index == len(merged):
+            merged.append({})
+        elif not 0 <= index < len(merged):
+            raise ValueError(f"{key}: there is no item {index}; the next new one is {len(merged)}")
+        is_item = isinstance(change, Mapping) and isinstance(merged[index], dict)
+        merged[index] = _deep_merge(merged[index], change) if is_item else change
     return merged
 
 
@@ -99,7 +166,10 @@ def nested(path: str, value: Any) -> dict[str, Any]:
 
 
 def describe() -> list[dict[str, Any]]:
-    """Every leaf Setting with its class, type and bounds: what a Control Surface needs to build a control."""
+    """Every leaf Setting with its class, type and bounds: what a Control Surface needs to build a control.
+
+    A list Setting (the Prompt Blend) is one entry of type "list" whose `items` describe one item's fields.
+    """
     return _describe(Settings, "")
 
 
@@ -113,7 +183,12 @@ def _describe(model: type[BaseModel], prefix: str) -> list[dict[str, Any]]:
         extra = info.json_schema_extra
         assert isinstance(extra, dict), f"{path} has no Setting class"
         field: dict[str, Any] = {"path": path, "class": extra["class"], "default": info.default}
-        if typing.get_origin(annotation) is Literal:
+        is_list = typing.get_origin(annotation) is list
+        if is_list:
+            (item,) = typing.get_args(annotation)
+            items = [value.model_dump() for value in info.default]
+            field |= {"type": "list", "default": items, "items": _describe(item, "")}
+        elif typing.get_origin(annotation) is Literal:
             field |= {"type": "enum", "options": list(typing.get_args(annotation))}
         else:
             field["type"] = {int: "integer", float: "number", str: "string"}[annotation]  # pyright: ignore[reportArgumentType]
@@ -125,7 +200,11 @@ def _describe(model: type[BaseModel], prefix: str) -> list[dict[str, Any]]:
                     field["maximum"] = bound
                 case annotated_types.MultipleOf(multiple_of=step):
                     field["step"] = step
+                case annotated_types.MinLen(min_length=length) if is_list:
+                    field["min_items"] = length
                 case annotated_types.MaxLen(max_length=length):
-                    field["max_length"] = length
+                    field["max_items" if is_list else "max_length"] = length
+        if "step" in extra:
+            field["step"] = extra["step"]
         fields.append(field)
     return fields

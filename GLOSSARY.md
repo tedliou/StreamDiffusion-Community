@@ -48,9 +48,15 @@ The text that steers Generation.
 **Prompt Blend**:
 A weighted mix of several Prompts used together as one.
 
+**Prompt Transition**:
+The time a change to the Prompt Blend takes to blend in, instead of snapping.
+
 **Strength**:
 How far Generation may move away from the Input Frame, from 0 (keep the Input Frame) to 1 (ignore it).
 _Avoid_: Denoise, t_index, noise level
+
+**Strength Glide**:
+The time Strength takes to move to a new value, whichever Control Surface set it.
 
 **Seed**:
 The number that fixes the noise used for Generation, so the same Input Frame and Settings give the same Output Frame.

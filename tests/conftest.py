@@ -12,7 +12,9 @@ class FakeBackend:
     """A deterministic, cheap image transform standing in for sd-turbo on CPU.
 
     Its UNet predicts no noise, so Output Frames are the Input Frame plus the Seed's noise, scaled
-    by Strength, pushed through an 8x down/up-sample. `unet_delay` simulates a slow GPU and
+    by Strength, pushed through an 8x down/up-sample. A Prompt's embedding is filled with its `shades` entry
+    (0 when absent) and the UNet brightens the image by that much, so tests can see which Prompt, or which
+    mix of Prompts, generated a frame. `unet_delay` simulates a slow GPU and
     `failures` makes that many UNet calls raise. A `negative` Backend inverts its Output Frames, so tests can
     tell which Backend generated a frame.
     """
@@ -30,10 +32,11 @@ class FakeBackend:
         self.unet_delay = unet_delay
         self.failures = 0
         self.prompts: list[str] = []
+        self.shades: dict[str, float] = {}
 
     def encode_prompt(self, prompt: str) -> torch.Tensor:
         self.prompts.append(prompt)
-        return torch.zeros(1, 77, 8)
+        return torch.full((1, 77, 8), self.shades.get(prompt, 0.0))
 
     def encode(self, image: torch.Tensor) -> torch.Tensor:
         pooled = F.avg_pool2d(image, self.latent_scale)
@@ -49,18 +52,25 @@ class FakeBackend:
         if self.failures:
             self.failures -= 1
             raise RuntimeError("CUDA error: an illegal memory access was encountered")
-        return torch.zeros_like(latents)
+        return torch.full_like(latents, -prompt_embeds.mean().item())  # predicting less noise brightens
 
 
 @pytest.fixture
 def small_settings() -> Settings:
-    """Small sizes keep the fake Backend fast on CPU. Source "cam" and Sink "out" are both Spout (RGBA)."""
+    """Small sizes keep the fake Backend fast on CPU. Source "cam" and Sink "out" are both Spout (RGBA).
+
+    Temporal Smoothing, Strength glide and Prompt transitions are off, so each Output Frame follows its Input
+    Frame and the latest Settings at once; the tests for those features turn them on.
+    """
     return Settings.model_validate(
         {
             "source": {"transport": "spout", "name": "cam"},
             "sink": {"transport": "spout", "name": "out"},
             "generation": {"width": 256, "height": 256},
             "output": {"width": 320, "height": 240},
+            "temporal_smoothing": 0.0,
+            "strength_glide": 0.0,
+            "prompt_transition": 0.0,
         }
     )
 

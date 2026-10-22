@@ -6,13 +6,16 @@ export type SettingClass = "live" | "reset" | "rebuild";
 export interface Field {
   path: string;
   class: SettingClass;
-  type: "integer" | "number" | "string" | "enum";
+  type: "integer" | "number" | "string" | "enum" | "list";
   default: unknown;
   options?: string[];
   minimum?: number;
   maximum?: number;
   step?: number;
   max_length?: number;
+  items?: Field[]; // a list's item fields, with paths relative to one item
+  min_items?: number;
+  max_items?: number;
 }
 
 export type Settings = { [key: string]: unknown };

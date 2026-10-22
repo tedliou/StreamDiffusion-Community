@@ -1,6 +1,7 @@
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { changeAt, type Field, type Result } from "../runtime";
 import { classText, optionText, settingText, text } from "../strings";
+import { PromptBlend, type WeightedPrompt } from "./PromptBlend";
 
 const LIVE_THROTTLE_MS = 100;
 
@@ -18,11 +19,14 @@ export function SettingControl({ field, value, update, suggestions, children }: 
   const [error, setError] = useState<string | null>(null);
   const info = settingText[field.path] ?? { label: field.path };
 
-  const commit = async (next: unknown) => {
-    const result = await update(changeAt(field.path, next));
+  const commitChanges = async (changes: Record<string, unknown>) => {
+    const result = await update(changes);
     setError(result.ok ? null : (result.error ?? "Rejected"));
     return result.ok;
   };
+  const commit = (next: unknown) => commitChanges(changeAt(field.path, next));
+  // One item of a list Setting, by index: `{prompts: {"1": {weight: 0.5}}}`.
+  const commitItem = (index: number, changes: object) => commitChanges(changeAt(field.path, { [index]: changes }));
 
   return (
     <div className="setting" data-path={field.path}>
@@ -36,7 +40,17 @@ export function SettingControl({ field, value, update, suggestions, children }: 
         )}
         <ClassBadge kind={field.class} />
       </div>
-      {renderControl(id, field, value, commit, suggestions)}
+      {field.type === "list" ? (
+        <PromptBlend
+          id={id}
+          field={field}
+          value={(value as WeightedPrompt[] | undefined) ?? []}
+          commit={commit}
+          commitItem={commitItem}
+        />
+      ) : (
+        renderControl(id, field, value, commit, suggestions)
+      )}
       {children}
       {info.help && (
         <p className="help" id={`${id}-help`}>
@@ -66,8 +80,6 @@ function renderControl(
   suggestions?: string[],
 ) {
   if (field.type === "enum") return <Segmented id={id} field={field} value={String(value)} commit={commit} />;
-  if (field.path === "prompt")
-    return <PromptInput id={id} field={field} value={String(value ?? "")} commit={commit} />;
   if (field.type === "string")
     return <TextInput id={id} value={String(value ?? "")} commit={commit} suggestions={suggestions} />;
   if (field.path === "seed") return <SeedInput id={id} field={field} value={Number(value)} commit={commit} />;
@@ -104,7 +116,7 @@ function Segmented({
 }
 
 /** A value that follows the Runtime unless the user is editing it. */
-function useDraft<T>(value: T) {
+export function useDraft<T>(value: T) {
   const [draft, setDraft] = useState(value);
   const editing = useRef(false);
   useEffect(() => {
@@ -158,49 +170,6 @@ function TextInput({
   );
 }
 
-function PromptInput({
-  id,
-  field,
-  value,
-  commit,
-}: {
-  id: string;
-  field: Field;
-  value: string;
-  commit: (next: unknown) => Promise<boolean>;
-}) {
-  const { draft, setDraft, editing } = useDraft(value);
-  const send = () => {
-    editing.current = false;
-    if (draft !== value) void commit(draft);
-  };
-  return (
-    <div className="prompt">
-      <textarea
-        id={id}
-        value={draft}
-        rows={4}
-        maxLength={field.max_length}
-        aria-describedby={`${id}-help`}
-        onFocus={() => {
-          editing.current = true;
-        }}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={send}
-        onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
-          if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-            event.preventDefault();
-            send();
-          }
-        }}
-      />
-      <button type="button" className="button" disabled={draft === value} onClick={send}>
-        {text.promptApply}
-      </button>
-    </div>
-  );
-}
-
 function SeedInput({
   id,
   field,
@@ -248,17 +217,19 @@ function SeedInput({
   );
 }
 
-/** A slider for quick changes with an exact numeric entry beside it. */
-function SliderInput({
+/** A slider for quick changes with an exact numeric entry beside it. `label` names both when several share a field. */
+export function SliderInput({
   id,
   field,
   value,
   commit,
+  label,
 }: {
   id: string;
   field: Field;
   value: number;
   commit: (next: unknown) => Promise<boolean>;
+  label?: string;
 }) {
   const step = field.step ?? (field.type === "integer" ? 1 : 0.01);
   const minimum = field.minimum ?? 0;
@@ -292,7 +263,7 @@ function SliderInput({
     <div className="slider">
       <input
         type="range"
-        aria-label={`${settingText[field.path]?.label ?? field.path} slider`}
+        aria-label={`${label ?? settingText[field.path]?.label ?? field.path} slider`}
         min={minimum}
         max={maximum}
         step={step}
@@ -307,6 +278,7 @@ function SliderInput({
         <input
           id={id}
           type="number"
+          aria-label={label}
           inputMode={field.type === "integer" ? "numeric" : "decimal"}
           className="number"
           min={minimum}

@@ -23,6 +23,7 @@ from websockets.sync.client import ClientConnection, connect
 from streamturbo.control import Control
 from streamturbo.control.osc import OscServer
 from streamturbo.control.web import WebServer
+from streamturbo.model_spec import GLASS_PROMPT
 from streamturbo.presets import PresetStore, initial_settings, load_last
 from streamturbo.runtime import Runtime
 from streamturbo.settings import Settings
@@ -138,6 +139,12 @@ def test_hello_carries_the_schema_settings_and_presets(rig: Rig):
     assert all(cls in ("live", "reset", "rebuild") for cls in classes.values())
     assert hello["settings"]["output"] == {"width": 320, "height": 240}
     assert {"name": "Glass", "bundled": True} in hello["presets"]
+    fields = {field["path"]: field for field in hello["schema"]}
+    assert fields["strength"]["step"] == 0.01
+    prompts = fields["prompts"]
+    assert (prompts["type"], prompts["class"], prompts["min_items"]) == ("list", "live", 1)
+    assert {item["path"]: item["type"] for item in prompts["items"]} == {"text": "string", "weight": "number"}
+    assert hello["settings"]["prompts"] == [{"text": GLASS_PROMPT, "weight": 1.0}]
     panel.close()
 
 
@@ -188,7 +195,7 @@ def test_presets_save_recall_rename_and_delete(rig: Rig):
     recalled = panel.request("preset.recall", name="ice")  # names are case-insensitive
     assert recalled["ok"]
     settings = rig.runtime.settings()[0]
-    assert (settings.strength, settings.prompt) == (0.3, "ice")
+    assert (settings.strength, settings.prompts[0].text) == (0.3, "ice")
 
     assert panel.request("preset.rename", name="Ice", new_name="Frost")["ok"]
     assert not panel.request("preset.recall", name="Ice")["ok"]
@@ -246,6 +253,27 @@ def test_osc_mirrors_settings_paths_and_recalls_presets(rig: Rig):
     rig.osc_send("/streamturbo/preset/recall", "Glass")
     wait_until(lambda: rig.runtime.settings()[0].strength == 0.68)
     panel.close()
+
+
+def test_osc_changes_prompts_by_index_and_sends_them_by_index(rig: Rig):
+    def texts() -> list[str]:
+        return [prompt.text for prompt in rig.runtime.settings()[0].prompts]
+
+    rig.osc_send("/streamturbo/prompts/1/text", "fire")  # the next index adds a Prompt
+    wait_until(lambda: texts() == [GLASS_PROMPT, "fire"])
+    assert rig.osc_in.wait_for("/streamturbo/prompts/1/text") == ("fire",)
+    rig.osc_send("/streamturbo/prompts/1/weight", 0.5)
+    wait_until(lambda: rig.runtime.settings()[0].prompts[1].weight == 0.5)
+    wait_until(lambda: rig.osc_in.wait_for("/streamturbo/prompts/1/weight") == (0.5,))  # after the 1.0 it began with
+
+    rig.osc_send("/streamturbo/prompts", '[{"text": "ice", "weight": 1}, {"text": "smoke", "weight": 2}]')
+    wait_until(lambda: texts() == ["ice", "smoke"])
+    rig.osc_send("/streamturbo/prompt", "steam")  # one Prompt on its own
+    wait_until(lambda: texts() == ["steam"])
+
+    rig.osc_send("/streamturbo/prompts/5/text", "nowhere")
+    (error,) = rig.osc_in.wait_for("/streamturbo/error")
+    assert "prompts" in error
 
 
 def test_osc_reports_errors_and_status(rig: Rig):

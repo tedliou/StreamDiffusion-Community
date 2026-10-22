@@ -7,7 +7,10 @@ import { type Field, type Runtime, type Settings, useRuntime, valueAt } from "./
 import { groupText, text } from "./strings";
 
 const GROUPS: { key: keyof typeof groupText; paths: string[] }[] = [
-  { key: "look", paths: ["prompt", "strength", "seed"] },
+  {
+    key: "look",
+    paths: ["prompts", "prompt_transition", "strength", "strength_glide", "seed", "temporal_smoothing"],
+  },
   { key: "source", paths: ["source.transport", "source.name"] },
   { key: "sink", paths: ["sink.transport", "sink.name", "sink.fps"] },
   { key: "resolution", paths: ["generation.width", "generation.height", "fit_mode"] },
