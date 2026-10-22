@@ -190,6 +190,7 @@ def _measure(
         "backend": status.backend,
         "unet_precision": option.precision if option.backend == "tensorrt" else "fp16",
         "temporal_coherence": settings.temporal_coherence and not int8,
+        "upscaler": settings.upscaling,
         "generation_resolution": [gw, gh],
         "output_resolution": [ow, oh],
         "output_format": sink.format.value,

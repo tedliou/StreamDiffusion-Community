@@ -48,10 +48,11 @@ start.cmd
 
 ## TensorRT Engine
 
-StreamTurbo 用 TensorRT 加速 UNet 和 tiny VAE。Engine 只能在建置它的顯示卡與 TensorRT 版本上執行，所以不隨專案發佈，而是在這台電腦上建置一次，存在專案資料夾的 `engines\`（不進 git）。
+StreamTurbo 用 TensorRT 加速 UNet、tiny VAE 和 Upscaler。Engine 只能在建置它的顯示卡與 TensorRT 版本上執行，所以不隨專案發佈，而是在這台電腦上建置一次，存在專案資料夾的 `engines\`（不進 git）。
 
 - 第一次 `streamturbo run` 時先用 PyTorch 輸出，同時在背景建置 Engine（約 4 分鐘），建好後自動切換。Web Panel 的 Backend 欄會顯示建置進度。
 - Engine 依模型版本、元件、解析度範圍（每邊 256–1024）、顯示卡、算力與 TensorRT 版本分開快取；更換顯示卡或升級 TensorRT 會自動重建，不會載入不相容的 Engine。
+- 每個元件各自快取，新增元件時只建缺的那個。例如更新到有 Upscaler 的版本後，只會多建 Upscaler 的 Engine（約 15 秒），UNet 和 VAE 照舊沿用。
 - 建置或載入失敗時繼續用 PyTorch 輸出，並在 Web Panel 顯示原因。
 - 演出前可以先建好：
 
@@ -129,6 +130,22 @@ Temporal Coherence 和 Temporal Smoothing 互相獨立，可以單獨或一起�
 
 `backend` 預設 `"auto"`：先用 PyTorch 輸出，背景建好 TensorRT Engine 後自動切換。設成 `"pytorch"` 可排除 TensorRT 以便診斷問題。
 
+### Upscaler
+
+輸出解析度大於生成解析度時，`upscaler`（預設開啟）用 Real-ESRGAN 的小型模型放大，補出邊緣和紋理，比單純縮放清楚很多。模型固定放大 4 倍，再縮放到輸出解析度：輸出設成生成解析度的 2 倍（例如 512×512 → 1024×1024）就是 2 倍，設成 4 倍（512×512 → 2048×2048）就直接送出模型的 4 倍畫面。輸出解析度不大於生成解析度時不會執行。
+
+成本（TensorRT，RTX 3070 功率上限 162 W，Glass，`streamturbo bench` 各 300 格、兩輪交替的平均）：
+
+| 生成 → 輸出 | Upscaler 關 | Upscaler 開 |
+|---|---|---|
+| 512×512 → 1024×1024 | 29.5 fps，33 ms | 22.2 fps，44 ms |
+| 512×384 → 1024×768 | 35.0 fps，28 ms | 27.2 fps，36 ms |
+| 512×512 → 2048×2048 |  | 21.1 fps，46 ms |
+
+每格約多 8–11 ms，VRAM 約多 0.1 GiB。4 倍和 2 倍的模型時間相同，但每格 Output Frame 是 2 倍的 4 倍大（2048×2048 RGBA 約 16 MB），從 GPU 拷貝和經 Spout/NDI 傳送的成本也跟著變大；投影機解析度用不到 4 倍時，用 2 倍就好。Engine 還在建置或使用 PyTorch Backend 時也會放大，只是比較慢（512×512 約 24 ms）。
+
+TouchDesigner 的 Nvidia Upscaler TOP（NVIDIA Maxine）也能放大，但它自己要佔 2 GB 以上的 VRAM，在 8 GB 的顯示卡上和 StreamTurbo 一起跑會用完 VRAM，整台電腦變慢。放大建議交給 `upscaler`。
+
 ### Settings 的三種類別
 
 每個 Setting 都標示類別，Web Panel 上以標籤顯示：
@@ -197,7 +214,7 @@ Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看�
 - `--input 圖片`：用自己的圖片當 Input Frame。
 - `--matrix`：跑品質/速度矩陣：PyTorch 基準，加上 TensorRT FP16/INT8 × 三種 Generation Resolution × 兩種 Output Resolution，每個選項存一張 PNG，結果寫到 `output\bench\matrix-日期-時間\`。
 
-參考值（RTX 3070 功率上限 162 W，Glass 1024×768）：TensorRT 約 8.2 fps，生成時間 p50 121 ms，峰值 VRAM 5.5 GiB；PyTorch 約 4.5 fps，p50 222 ms。
+參考值（RTX 3070 功率上限 162 W，Glass 1024×768）：TensorRT 約 8.2 fps，生成時間 p50 121 ms，峰值 VRAM 5.5 GiB；PyTorch 約 4.5 fps，p50 222 ms。生成 512×512 時見 [Upscaler](#upscaler) 的成本表。報告裡的 `upscaler` 表示這次量測 Upscaler 是否真的有執行。
 
 ## TouchDesigner 連接
 
@@ -246,7 +263,8 @@ Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看�
 | uv 安裝失敗 | 確認網路連線，或手動安裝 [uv](https://docs.astral.sh/uv/) 後重新執行 |
 | `doctor` 顯示 NOT READY | 依照 PROBLEM 那幾行的說明處理 |
 | 狀態一直是 `waiting` | 用 `streamturbo run --list-sources` 確認來源名稱，NDI 另需確認防火牆允許 |
-| 每秒格數偏低 | 確認沒有其他程式占用顯示卡，並用 `doctor` 檢查功率上限 |
+| 每秒格數偏低 | 確認沒有其他程式占用顯示卡，並用 `doctor` 檢查功率上限；輸出比生成大時，Upscaler 每格約多 8–11 ms，不需要時關掉 `upscaler` |
+| 整台電腦變慢、每秒格數掉到個位數 | VRAM 用完了，驅動程式改用系統記憶體。關掉其他吃 VRAM 的程式或 TouchDesigner 裡的 Nvidia Upscaler TOP；放大交給 `upscaler` |
 | 輸出畫面閃爍、細節亂跳 | 確認 `temporal_coherence` 開啟；再提高 `temporal_smoothing`（例如 0.3），或降低 `strength` |
 | 快速移動時有拖影 | 降低 `temporal_smoothing`，0 表示關閉 |
 | 改了提示詞或 strength 卻慢慢才變 | 這是 `prompt_transition` 和 `strength_glide` 的漸變；要立刻切換時設成 0 |
