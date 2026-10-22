@@ -12,7 +12,6 @@ class PyTorchBackend:
 
     def __init__(self, model_dir: Path, tiny_vae_dir: Path, device: str = "cuda") -> None:
         from diffusers.models.autoencoders.autoencoder_tiny import AutoencoderTiny
-        from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
         from diffusers.schedulers.scheduling_euler_discrete import EulerDiscreteScheduler
         from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -27,15 +26,31 @@ class PyTorchBackend:
             .to(self.device)  # pyright: ignore[reportArgumentType]
             .eval()
         )
-        self._unet = (
-            UNet2DConditionModel.from_pretrained(model_dir, subfolder="unet", variant="fp16", torch_dtype=self.dtype)
-            .to(self.device, memory_format=torch.channels_last)  # pyright: ignore[reportArgumentType]
-            .eval()
-        )
+        self._model_dir = model_dir
+        self._unet: torch.nn.Module | None = self._load_unet()
         self._vae = AutoencoderTiny.from_pretrained(tiny_vae_dir, torch_dtype=self.dtype)
         self._vae = self._vae.to(self.device).eval()  # pyright: ignore[reportArgumentType]
         scheduler = EulerDiscreteScheduler.from_pretrained(model_dir, subfolder="scheduler")
         self.alphas_cumprod = scheduler.alphas_cumprod.float().to(self.device)  # pyright: ignore[reportAttributeAccessIssue]
+
+    def _load_unet(self) -> torch.nn.Module:
+        from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
+
+        unet = UNet2DConditionModel.from_pretrained(
+            self._model_dir, subfolder="unet", variant="fp16", torch_dtype=self.dtype
+        )
+        return unet.to(self.device, memory_format=torch.channels_last).eval()  # pyright: ignore[reportArgumentType]
+
+    def unet_module(self) -> torch.nn.Module:
+        """The UNet, reloaded from disk (a few seconds) if `release()` dropped it."""
+        if self._unet is None:
+            self._unet = self._load_unet()
+        return self._unet
+
+    def release(self) -> None:
+        """Free the UNet's VRAM while another Backend generates; the text encoder and tiny VAE stay loaded."""
+        self._unet = None
+        torch.cuda.empty_cache()
 
     @torch.inference_mode()
     def encode_prompt(self, prompt: str) -> torch.Tensor:
@@ -58,4 +73,5 @@ class PyTorchBackend:
 
     @torch.inference_mode()
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
-        return self._unet(latents.to(self.dtype), timestep, encoder_hidden_states=prompt_embeds, return_dict=False)[0]
+        unet = self.unet_module()
+        return unet(latents.to(self.dtype), timestep, encoder_hidden_states=prompt_embeds, return_dict=False)[0]

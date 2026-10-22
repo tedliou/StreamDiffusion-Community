@@ -22,6 +22,8 @@ dependencies = [
     "aiohttp>=3.14.5",
     "python-osc>=1.10.2",
     "tomli-w>=1.2.0",
+    "tensorrt-cu13==10.16.1.11",
+    "onnx>=1.23",
 ]
 
 [project.scripts]
@@ -37,6 +39,9 @@ dev = [
     "pytest>=8.4",
     "ruff>=0.14",
     "websockets>=17.3",
+]
+int8 = [
+    "nvidia-modelopt==0.47.0",
 ]
 
 [build-system]

@@ -49,4 +49,4 @@ GLASS_PROMPT = (
     "hdr, bloom"
 )
 GLASS_STRENGTH = 0.68
-GLASS_SIZE = (1024, 768)
+GLASS_SIZE = (1024, 768)  # Generation and Output Resolution, picked from the M3 bench matrix (ticket #7)

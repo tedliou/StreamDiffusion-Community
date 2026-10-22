@@ -4,9 +4,11 @@ In:  `/streamturbo/<setting path>` with one value, e.g. `/streamturbo/strength 0
      `/streamturbo/preset/recall "Glass"`, `/streamturbo/preset/save "name"`;
      `/streamturbo/sync` re-sends all Settings.
 Out: every Setting at its own address whenever Settings change (from any Control Surface),
-     `/streamturbo/status/<field>` a few times a second, and `/streamturbo/error "message"` for a rejected message.
+     `/streamturbo/status/<field>` a few times a second (nested fields as `status/engines/state`),
+     and `/streamturbo/error "message"` for a rejected message.
 """
 
+import functools
 import logging
 import threading
 from typing import Any
@@ -21,7 +23,17 @@ from streamturbo.settings import nested
 PREFIX = "/streamturbo/"
 STATUS_INTERVAL = 0.5
 log = logging.getLogger(__name__)
-STATUS_FIELDS = ("source_state", "throughput_fps", "generation_ms_p50", "settings_version", "error")
+STATUS_FIELDS = (
+    "source_state",
+    "throughput_fps",
+    "generation_ms_p50",
+    "frames_skipped",
+    "settings_version",
+    "error",
+    "backend",
+    "engines.state",
+    "engines.progress",
+)
 
 
 class OscServer:
@@ -93,8 +105,9 @@ class OscServer:
             try:
                 status = self._control.status()
                 for field in STATUS_FIELDS:
-                    value = status[field]
-                    self._client.send_message(f"{PREFIX}status/{field}", "" if value is None else value)
+                    value = functools.reduce(lambda node, key: node[key], field.split("."), status)
+                    address = f"{PREFIX}status/{field.replace('.', '/')}"
+                    self._client.send_message(address, "" if value is None else value)
             except Exception:  # an unreachable reply host or a failed sample; keep reporting
                 log.exception("could not send the status over OSC")
 

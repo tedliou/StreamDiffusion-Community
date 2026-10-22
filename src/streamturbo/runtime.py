@@ -4,6 +4,7 @@ Settings change only through update(). The generate thread applies the latest sn
 (ADR-0008); the receive and send threads follow the applied snapshot and reopen their Transport when it changes.
 """
 
+import dataclasses
 import threading
 import time
 from collections import deque
@@ -13,19 +14,21 @@ from types import TracebackType
 from typing import Any, Literal
 
 import torch
+import torch.nn.functional as F
 
 from streamturbo import imageops
-from streamturbo.backends import Backend
+from streamturbo.backends import Backend, BestBackend, EngineStatus
 from streamturbo.frames import InputFrame, OutputFrame, PixelFormat, host_buffer
 from streamturbo.generation import GenerationCore
 from streamturbo.mailbox import Mailbox
-from streamturbo.settings import Settings
+from streamturbo.settings import Settings, SimilarFrameSkip
 from streamturbo.transports import Sink, Source, Transports
 
 POLL = 0.05  # seconds a thread waits before re-checking whether to stop
 IN_FLIGHT = 2  # Generations queued on the GPU at once: enough to overlap, few enough to keep frames fresh
 
 METRICS_WINDOW = 120  # Output Frames the metrics are computed over
+SKIP_CELL = 16  # Similar Frame Skip compares Input Frames averaged over cells of this many pixels per side
 
 SourceState = Literal["none", "waiting", "live", "lost"]
 
@@ -63,18 +66,50 @@ class RuntimeStatus:
     error: str | None  # the latest Transport or Generation error, cleared when the Source comes back
     settings_version: int  # the Settings version Output Frames are generated with now
     frames_received: int
-    frames_sent: int
+    frames_sent: int  # including frames repeated by Similar Frame Skip
+    frames_skipped: int  # Output Frames repeated by Similar Frame Skip instead of generated
     dropped_frames: int  # replaced in a mailbox before anyone read them
-    throughput_fps: float  # Output Frames per second over the recent window
+    throughput_fps: float  # Output Frames generated per second over the recent window, repeats excluded
     generation_ms_p50: float  # Generation Time percentiles over the recent window
     generation_ms_p95: float
-    backend: str
+    backend: str  # the Backend generating now
+    engines: EngineStatus  # TensorRT Engine build progress; "off" for a Backend that builds none
 
 
 @dataclass(frozen=True)
 class _Generated:
     frame: OutputFrame
-    timing: _Timing
+    timing: _Timing  # for a repeat, the original's: sending still waits for its copy to the host
+    repeated: bool = False  # the last generated Output Frame again, repeated by Similar Frame Skip
+
+
+class _SimilarFrameSkip:
+    """Decides whether an Input Frame is close enough to the last generated one to repeat its Output Frame.
+
+    It compares cell averages computed on the prepare stream, so deciding waits for that frame's upload and
+    conversion only, never for a Generation in flight.
+    """
+
+    def __init__(self) -> None:
+        self._reference: torch.Tensor | None = None  # cell averages of the last generated Input Frame
+        self._key: object = None  # everything else the last Output Frame depends on
+        self._skips = 0
+
+    def similar(self, image: torch.Tensor, key: object, settings: SimilarFrameSkip) -> bool:
+        cells = F.avg_pool2d(image, SKIP_CELL, ceil_mode=True)
+        reference, same_key = self._reference, key == self._key
+        if (
+            settings.threshold > 0
+            and same_key
+            and self._skips < settings.max_skips
+            and reference is not None
+            and reference.shape == cells.shape
+            and (cells - reference).abs().mean().item() / 2 < settings.threshold  # images span [-1, 1]
+        ):
+            self._skips += 1  # the reference stays the generated frame, so slow drift adds up
+            return True
+        self._reference, self._key, self._skips = cells, key, 0
+        return False
 
 
 class Runtime:
@@ -99,7 +134,7 @@ class Runtime:
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
-        self._received = self._sent = self._dropped = 0
+        self._received = self._sent = self._dropped = self._skipped = 0
         self._source_state: SourceState = "waiting"
         self._error: str | None = None
         self._last_input: InputFrame | None = None
@@ -110,6 +145,7 @@ class Runtime:
         self._reconnect_delay = reconnect_delay
 
     def start(self) -> None:
+        self._choose_backend()
         self._core.set_prompt(self._settings.prompt)
         self._core.set_seed(self._settings.seed)
         self._warm_up()
@@ -122,7 +158,7 @@ class Runtime:
         """Generate once from a black frame so kernel selection (seconds on first use) happens before going live."""
         gen = self._settings.generation
         black = InputFrame(host_buffer(gen.width * gen.height * 4).zero_(), gen.width, gen.height, PixelFormat.RGBA)
-        self._generate(-1, black).timing.wait_ms()
+        self._generate(-1, self._prepare(black)).timing.wait_ms()
 
     def stop(self) -> None:
         self._stop.set()
@@ -160,6 +196,12 @@ class Runtime:
                 self._core.set_prompt(self._settings.prompt)
             if self._settings.seed != previous.seed:
                 self._core.set_seed(self._settings.seed)
+        self._choose_backend()
+
+    def _choose_backend(self) -> None:
+        """Between two Generations: adopt freshly built Engines, or follow a forced Backend."""
+        if isinstance(self._backend, BestBackend):
+            self._backend.choose(self._settings.backend)
 
     def status(self) -> RuntimeStatus:
         with self._lock:
@@ -169,11 +211,15 @@ class Runtime:
                 settings_version=self._settings_version,
                 frames_received=self._received,
                 frames_sent=self._sent,
+                frames_skipped=self._skipped,
                 dropped_frames=self._dropped,
                 throughput_fps=_rate(self._sent_at),
                 generation_ms_p50=_percentile(self._generation_ms, 0.50),
                 generation_ms_p95=_percentile(self._generation_ms, 0.95),
                 backend=self._backend.name,
+                engines=self._backend.engine_status()
+                if isinstance(self._backend, BestBackend)
+                else EngineStatus("off"),
             )
 
     def _record_error(self, error: Exception) -> None:
@@ -196,12 +242,16 @@ class Runtime:
             self._dropped += dropped
             self._last_input = frame
 
-    def _record_sent(self, frame: OutputFrame, generation_ms: float) -> None:
+    def _record_sent(self, frame: OutputFrame, generation_ms: float | None) -> None:
+        """`generation_ms` is None for a frame repeated by Similar Frame Skip: sent, but not generated."""
         with self._lock:
             self._sent += 1
             self._last_output = frame
-            self._generation_ms.append(generation_ms)
-            self._sent_at.append(time.monotonic())
+            if generation_ms is None:
+                self._skipped += 1
+            else:
+                self._generation_ms.append(generation_ms)
+                self._sent_at.append(time.monotonic())
 
     def __enter__(self) -> "Runtime":
         self.start()
@@ -248,6 +298,10 @@ class Runtime:
     def _generate_loop(self) -> None:
         device = self._backend.device
         stream = torch.cuda.Stream(device) if device.type == "cuda" else None
+        # Uploads and converts the next Input Frame while the previous Generation still runs on `stream`.
+        prepare = torch.cuda.Stream(device) if device.type == "cuda" else None
+        skip = _SimilarFrameSkip()
+        last: _Generated | None = None  # the last generated Output Frame, which Similar Frame Skip repeats
         next_due = time.monotonic()
         in_flight: deque[_Timing] = deque()
         while not self._stop.is_set():
@@ -261,31 +315,50 @@ class Runtime:
                         item = self._inputs.take(POLL)
                         if item is None:
                             continue
+                        seq, image = item[0], self._prepare(item[1], prepare)
+                        key = (self._settings_version, self._backend.name)
+                        with torch.cuda.stream(prepare):  # where `image` was made: no wait on a Generation
+                            similar = skip.similar(image, key, self._settings.similar_frame_skip)
+                        if last is not None and similar:
+                            frame = dataclasses.replace(last.frame, input_seq=seq)
+                            self._hand_over(_Generated(frame, last.timing, repeated=True))
+                            continue
+                        if stream is not None and prepare is not None:
+                            stream.wait_stream(prepare)
+                            image.record_stream(stream)  # allocated on `prepare`, freed after use on `stream`
                     else:  # txt2img: pace Generation to the Sink's frame rate
                         period = 1 / self._settings.sink.fps
                         next_due = max(next_due + period, time.monotonic() - period)
                         if self._stop.wait(max(0.0, next_due - time.monotonic())):
                             break
-                        item = (-1, None)
-                    generated = self._generate(*item)
+                        seq, image = -1, None
+                    generated = self._generate(seq, image)
             except Exception as error:  # e.g. a CUDA error: report it and carry on with the next frame
                 self._record_error(error)
                 self._stop.wait(POLL)
                 continue
             in_flight.append(generated.timing)
-            dropped = self._outputs.put(generated)
-            with self._lock:
-                self._dropped += dropped
+            last = generated
+            self._hand_over(generated)
 
-    def _generate(self, seq: int, frame: InputFrame | None) -> _Generated:
+    def _hand_over(self, generated: "_Generated") -> None:
+        dropped = self._outputs.put(generated)
+        with self._lock:
+            self._dropped += dropped
+
+    def _prepare(self, frame: InputFrame, stream: torch.cuda.Stream | None = None) -> torch.Tensor:
+        """Upload an Input Frame and map it onto the Generation Resolution: (1, 3, H, W) in [-1, 1]."""
+        settings, device = self._settings, self._backend.device
+        gen = settings.generation
+        with torch.cuda.stream(stream):
+            raw = frame.data.to(device, non_blocking=True)
+            rgb = imageops.to_rgb(raw, frame.width, frame.height, frame.row_bytes, frame.format)
+            return imageops.fit(rgb, gen.width, gen.height, settings.fit_mode) * 2 - 1
+
+    def _generate(self, seq: int, image: torch.Tensor | None) -> _Generated:
         settings, device = self._settings, self._backend.device
         gen = settings.generation
         timing = _Timing(device)
-        image = None
-        if frame is not None:
-            raw = frame.data.to(device, non_blocking=True)
-            rgb = imageops.to_rgb(raw, frame.width, frame.height, frame.row_bytes, frame.format)
-            image = imageops.fit(rgb, gen.width, gen.height, settings.fit_mode) * 2 - 1
         result = self._core.generate(image, settings.strength, gen.width, gen.height)
         out, fmt = settings.output, self._sink_format
         packed = imageops.to_bytes((result.float() + 1) / 2, out.width, out.height, fmt)
@@ -311,7 +384,7 @@ class Runtime:
                     if generated.frame.format != sink.format:
                         continue  # generated for the previous Sink
                     sink.send(generated.frame)
-                    self._record_sent(generated.frame, generation_ms)
+                    self._record_sent(generated.frame, None if generated.repeated else generation_ms)
             except Exception as error:
                 self._record_error(error)
                 self._stop.wait(self._reconnect_delay)

@@ -14,6 +14,18 @@ export const settingText: Record<string, { label: string; help?: string; unit?: 
   "output.width": { label: "Width", unit: "px" },
   "output.height": { label: "Height", unit: "px" },
   fit_mode: { label: "Fit Mode", help: "How an Input Frame with another aspect ratio is mapped." },
+  "similar_frame_skip.threshold": {
+    label: "Skip Threshold",
+    help: "Repeat the last Output Frame while the Input Frame changes less than this. 0 turns Similar Frame Skip off.",
+  },
+  "similar_frame_skip.max_skips": {
+    label: "Maximum Skips",
+    help: "Generate after this many repeats, so slow changes still appear.",
+  },
+  backend: {
+    label: "Backend",
+    help: "Auto switches to TensorRT once its Engines are built. PyTorch rules TensorRT out when diagnosing.",
+  },
 };
 
 export const optionText: Record<string, string> = {
@@ -23,6 +35,8 @@ export const optionText: Record<string, string> = {
   fill: "Fill",
   fit: "Fit",
   stretch: "Stretch",
+  auto: "Auto",
+  pytorch: "PyTorch",
 };
 
 export const classText = {
@@ -37,6 +51,7 @@ export const groupText = {
   sink: "Sink",
   resolution: "Generation Resolution",
   output: "Output Resolution",
+  performance: "Performance",
   presets: "Presets",
   previews: "Previews",
 };
@@ -67,6 +82,9 @@ export const text = {
     vram: "VRAM",
     power: "GPU Power",
     backend: "Backend",
+    skipped: "Skipped",
+    building: (percent: string) => `Building Engines ${percent}`,
+    engineFailed: "Engines failed, using PyTorch",
     applying: "Applying…",
   },
   previews: {

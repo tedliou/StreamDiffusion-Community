@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from streamturbo.model_spec import GLASS_PROMPT, GLASS_SIZE, GLASS_STRENGTH, SD_TURBO
 
 FitMode = Literal["fill", "fit", "stretch"]
+BackendChoice = Literal["auto", "pytorch"]  # auto: TensorRT once its Engines are built, PyTorch until then
 SettingClass = Literal["live", "reset", "rebuild"]
 
 
@@ -52,6 +53,13 @@ class SinkSettings(_Model):
     fps: float = _setting("reset", 30.0, gt=0, le=240)  # declared NDI frame rate
 
 
+class SimilarFrameSkip(_Model):
+    # Mean absolute difference (0-1) between downsampled Input Frames below which the last Output Frame is
+    # repeated instead of generating; 0 turns Similar Frame Skip off.
+    threshold: float = _setting("live", 0.0, ge=0.0, le=1.0)
+    max_skips: int = _setting("live", 30, ge=1, le=10000)  # then one Generation, so slow changes still appear
+
+
 class Settings(_Model):
     source: SourceSettings = SourceSettings()
     sink: SinkSettings = SinkSettings()
@@ -61,6 +69,8 @@ class Settings(_Model):
     prompt: str = _setting("live", GLASS_PROMPT, max_length=2000)
     strength: float = _setting("live", GLASS_STRENGTH, ge=0.0, le=1.0)
     seed: int = _setting("live", 2, ge=0, lt=2**31)  # OSC integers are 32-bit
+    similar_frame_skip: SimilarFrameSkip = SimilarFrameSkip()
+    backend: BackendChoice = _setting("rebuild", "auto")
 
     @classmethod
     def load(cls, path: Path) -> Self:

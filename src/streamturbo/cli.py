@@ -26,9 +26,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--osc-reply", default="127.0.0.1:7001", metavar="HOST:PORT", help="where OSC status and Settings go"
     )
     run.add_argument("--no-browser", action="store_true", help="do not open the Web Panel in the browser")
+    build = commands.add_parser("build-engines", help="build the TensorRT Engines now, e.g. before a show")
+    build.add_argument("--precision", choices=("fp16", "int8"), default="fp16", help="UNet precision (default fp16)")
     bench = commands.add_parser("bench", help="measure the Glass workload and write a JSON report")
     bench.add_argument("--settings", type=Path, help="a Settings TOML file")
     bench.add_argument("--frames", type=int, default=120, help="frames to measure after warm-up")
+    bench.add_argument("--backend", choices=("tensorrt", "pytorch"), default="tensorrt", help="default tensorrt")
+    bench.add_argument("--precision", choices=("fp16", "int8"), default="fp16", help="TensorRT UNet precision")
+    bench.add_argument("--input", type=Path, help="an image to use as the Input Frame instead of the test pattern")
+    bench.add_argument(
+        "--matrix", action="store_true", help="run the quality/speed matrix, saving one Output Frame per option"
+    )
 
     args = parser.parse_args(argv)
     if args.command == "doctor":
@@ -39,9 +47,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report.ok else 1
     if args.command == "run":
         return _list_sources() if args.list_sources else _run(args)
+    if args.command == "build-engines":
+        return _build_engines(args.precision)
     from streamturbo import bench as bench_module
 
-    report_path = bench_module.run(_settings(args.settings), args.frames)
+    if args.matrix:
+        folder = bench_module.matrix(_settings(args.settings), args.frames, image=args.input)
+        print((folder / "results.md").read_text(encoding="utf-8"))
+        print(f"Results and one image per option in {folder}")
+        return 0
+    report_path = bench_module.run(
+        _settings(args.settings), args.frames, backend=args.backend, precision=args.precision, image=args.input
+    )
     print(report_path.read_text(encoding="utf-8"))
     print(f"Report written to {report_path}")
     return 0
@@ -66,12 +83,14 @@ def _run(args: argparse.Namespace) -> int:
     import webbrowser
 
     from streamturbo import weights
+    from streamturbo.backends import BestBackend
     from streamturbo.backends.pytorch import PyTorchBackend
+    from streamturbo.backends.tensorrt import builder
     from streamturbo.control import Control
     from streamturbo.control.osc import OscServer
     from streamturbo.control.web import WebServer
     from streamturbo.model_spec import SD_TURBO
-    from streamturbo.paths import last_settings_path, presets_dir, project_home
+    from streamturbo.paths import engines_dir, last_settings_path, presets_dir, project_home
     from streamturbo.presets import PresetStore, initial_settings
     from streamturbo.runtime import Runtime
     from streamturbo.transports import SystemTransports
@@ -80,7 +99,8 @@ def _run(args: argparse.Namespace) -> int:
     settings = initial_settings(store, last_settings_path(), args.settings, args.preset)
     reply_host, _, reply_port = args.osc_reply.rpartition(":")
     print("Loading sd-turbo ...")
-    backend = PyTorchBackend(*weights.fetch_all(SD_TURBO))
+    pytorch = PyTorchBackend(*weights.fetch_all(SD_TURBO))
+    backend = BestBackend(pytorch, builder(pytorch, SD_TURBO, engines_dir()))
     runtime = Runtime(settings, backend, transports)
     control = Control(runtime, store, transports, last_settings_path())
     token = _access_token(project_home() / "access-token") if args.lan else None
@@ -114,9 +134,37 @@ def _status_line(status) -> str:
     line = (
         f"source {status.source_state:<7} | throughput {status.throughput_fps:5.1f} fps | "
         f"generation {status.generation_ms_p50:5.0f} ms p50, {status.generation_ms_p95:5.0f} ms p95 | "
-        f"dropped {status.dropped_frames}"
+        f"dropped {status.dropped_frames} | {status.backend}"
     )
+    if status.engines.state == "building":
+        line += f" (building Engines {status.engines.progress:.0%})"
+    elif status.engines.state == "failed":
+        line += f" | Engines failed: {status.engines.detail}"
     return f"{line} | {status.error}" if status.error else line
+
+
+def _build_engines(precision: str) -> int:
+    from streamturbo import weights
+    from streamturbo.backends.pytorch import PyTorchBackend
+    from streamturbo.backends.tensorrt import build_engines, missing_engines
+    from streamturbo.model_spec import SD_TURBO
+    from streamturbo.paths import engines_dir
+
+    todo = missing_engines(engines_dir(), SD_TURBO, precision)  # pyright: ignore[reportArgumentType]
+    if not todo:
+        print(f"All {precision} Engines are already built in {engines_dir()}")
+        return 0
+    print(f"Building {', '.join(todo)} ({precision}); this takes a few minutes once ...")
+    pytorch = PyTorchBackend(*weights.fetch_all(SD_TURBO))
+
+    def progress(component: str, fraction: float) -> None:
+        print(f"  {component or 'done':<12} {fraction:4.0%}".ljust(40), end="\r", flush=True)
+
+    paths = build_engines(pytorch, SD_TURBO, engines_dir(), precision, progress)  # pyright: ignore[reportArgumentType]
+    print()
+    for component, path in paths.items():
+        print(f"{component:<12} {path}")
+    return 0
 
 
 def _access_token(path: Path) -> str:

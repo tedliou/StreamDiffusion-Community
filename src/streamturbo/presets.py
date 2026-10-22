@@ -19,7 +19,8 @@ from streamturbo.settings import Settings
 log = logging.getLogger(__name__)
 
 BUNDLED_DIR = Path(__file__).parent / "bundled_presets"
-CONNECTION_FIELDS = ("source", "sink")
+# Not part of a look: where frames come from and go to, and which Backend this machine runs.
+MACHINE_FIELDS = ("source", "sink", "backend")
 _NAME = re.compile(r"^[\w][\w .-]{0,63}$")
 
 
@@ -49,8 +50,8 @@ class PresetStore:
         try:
             with path.open("rb") as file:
                 values = tomllib.load(file)
-            if any(field in values for field in CONNECTION_FIELDS):
-                raise PresetError(f"Preset {name!r} must not contain source or sink")
+            if any(field in values for field in MACHINE_FIELDS):
+                raise PresetError(f"Preset {name!r} must not contain {', '.join(MACHINE_FIELDS)}")
             Settings().merged(values)
         except (tomllib.TOMLDecodeError, ValueError) as error:
             raise PresetError(f"Preset {name!r} is invalid: {error}") from error
@@ -61,7 +62,7 @@ class PresetStore:
         if self._bundled(name) is not None:
             raise PresetError(f"{name!r} is a bundled Preset; save under another name")
         self.folder.mkdir(parents=True, exist_ok=True)
-        look = settings.model_dump(exclude=set(CONNECTION_FIELDS))
+        look = settings.model_dump(exclude=set(MACHINE_FIELDS))
         (self.folder / f"{name}.toml").write_text(tomli_w.dumps(look), encoding="utf-8")
 
     def rename(self, name: str, new_name: str) -> None:

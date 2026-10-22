@@ -16,6 +16,11 @@ def models_dir() -> Path:
     return project_home() / "models"
 
 
+def engines_dir() -> Path:
+    """TensorRT Engines built on this machine; never committed (ADR-0005)."""
+    return project_home() / "engines"
+
+
 def output_dir() -> Path:
     return project_home() / "output"
 

@@ -13,14 +13,16 @@ class FakeBackend:
 
     Its UNet predicts no noise, so Output Frames are the Input Frame plus the Seed's noise, scaled
     by Strength, pushed through an 8x down/up-sample. `unet_delay` simulates a slow GPU and
-    `failures` makes that many UNet calls raise.
+    `failures` makes that many UNet calls raise. A `negative` Backend inverts its Output Frames, so tests can
+    tell which Backend generated a frame.
     """
 
-    name = "fake"
     latent_channels = 4
     latent_scale = 8
 
-    def __init__(self, unet_delay: float = 0.0) -> None:
+    def __init__(self, unet_delay: float = 0.0, name: str = "fake", negative: bool = False) -> None:
+        self.name = name
+        self.negative = negative
         self.device = torch.device("cpu")
         self.dtype = torch.float32
         betas = torch.linspace(0.00085**0.5, 0.012**0.5, 1000) ** 2
@@ -38,7 +40,8 @@ class FakeBackend:
         return torch.cat((pooled, torch.zeros_like(pooled[:, :1])), dim=1)
 
     def decode(self, latents: torch.Tensor) -> torch.Tensor:
-        return F.interpolate(latents[:, :3], scale_factor=self.latent_scale, mode="nearest").clamp(-1, 1)
+        image = F.interpolate(latents[:, :3], scale_factor=self.latent_scale, mode="nearest").clamp(-1, 1)
+        return -image if self.negative else image
 
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
         if self.unet_delay:
