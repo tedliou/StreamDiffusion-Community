@@ -14,7 +14,8 @@ Settings over OSC, shows status, and measures Round-trip Latency.
 
 PAREXEC = r"""
 # Sends Settings to StreamTurbo when the component's parameters change (OSC, /streamturbo/<setting path>).
-SETTINGS = {"Prompt": "prompt", "Strength": "strength", "Seed": "seed"}
+# Prompt is the first Prompt of the Prompt Blend, so Prompts added in the Web Panel stay.
+SETTINGS = {"Prompt": "prompts/0/text", "Strength": "strength", "Seed": "seed"}
 
 
 def send(address, value):
@@ -47,7 +48,7 @@ def onPulse(par):
 
 OSCIN_CALLBACKS = r"""
 # Shows what StreamTurbo reports: its Settings (whichever Control Surface changed them) and its status.
-SETTINGS = {"/streamturbo/prompt": "Prompt", "/streamturbo/strength": "Strength", "/streamturbo/seed": "Seed"}
+SETTINGS = {"/streamturbo/prompts/0/text": "Prompt", "/streamturbo/strength": "Strength", "/streamturbo/seed": "Seed"}
 STATUS = {
     "/streamturbo/status/source_state": "Sourcestate",
     "/streamturbo/status/throughput_fps": "Throughput",

@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from streamturbo import imageops
 from streamturbo.backends import Backend, BestBackend, EngineStatus
 from streamturbo.frames import InputFrame, OutputFrame, PixelFormat, host_buffer
-from streamturbo.generation import GenerationCore
+from streamturbo.generation import GenerationCore, Glide
 from streamturbo.mailbox import Mailbox
 from streamturbo.settings import Settings, SimilarFrameSkip
 from streamturbo.transports import Sink, Source, Transports
@@ -127,6 +127,7 @@ class Runtime:
         self._pending: tuple[Settings, int] | None = None  # submitted, applied between two Output Frames
         self._backend = backend
         self._core = GenerationCore(backend)
+        self._strength = Glide(settings.strength)  # what Output Frames are generated with while gliding
         self._transports = transports
         self._sink_format = PixelFormat.RGBA  # what the open Sink takes; frames in another format are not sent
         self._inputs: Mailbox[tuple[int, InputFrame]] = Mailbox()
@@ -146,7 +147,7 @@ class Runtime:
 
     def start(self) -> None:
         self._choose_backend()
-        self._core.set_prompt(self._settings.prompt)
+        self._core.set_prompts(_blend(self._settings))
         self._core.set_seed(self._settings.seed)
         self._warm_up()
         for loop in (self._receive_loop, self._generate_loop, self._send_loop):
@@ -159,6 +160,7 @@ class Runtime:
         gen = self._settings.generation
         black = InputFrame(host_buffer(gen.width * gen.height * 4).zero_(), gen.width, gen.height, PixelFormat.RGBA)
         self._generate(-1, self._prepare(black)).timing.wait_ms()
+        self._core.forget_previous()  # so Temporal Smoothing never fades in from the black frame
 
     def stop(self) -> None:
         self._stop.set()
@@ -192,10 +194,12 @@ class Runtime:
             if pending is not None:
                 self._settings, self._settings_version = pending
         if pending is not None:
-            if self._settings.prompt != previous.prompt:
-                self._core.set_prompt(self._settings.prompt)
+            if self._settings.prompts != previous.prompts:
+                self._core.set_prompts(_blend(self._settings), self._settings.prompt_transition)
             if self._settings.seed != previous.seed:
                 self._core.set_seed(self._settings.seed)
+            if self._settings.strength != self._strength.target:
+                self._strength.move_to(self._settings.strength, self._settings.strength_glide)
         self._choose_backend()
 
     def _choose_backend(self) -> None:
@@ -316,7 +320,9 @@ class Runtime:
                         if item is None:
                             continue
                         seq, image = item[0], self._prepare(item[1], prepare)
-                        key = (self._settings_version, self._backend.name)
+                        # While a glide or transition runs, equal Input Frames still need new Output Frames.
+                        settling = not (self._core.settled() and self._strength.settled())
+                        key = (self._settings_version, self._backend.name, seq if settling else None)
                         with torch.cuda.stream(prepare):  # where `image` was made: no wait on a Generation
                             similar = skip.similar(image, key, self._settings.similar_frame_skip)
                         if last is not None and similar:
@@ -359,7 +365,8 @@ class Runtime:
         settings, device = self._settings, self._backend.device
         gen = settings.generation
         timing = _Timing(device)
-        result = self._core.generate(image, settings.strength, gen.width, gen.height)
+        strength = self._strength.value()
+        result = self._core.generate(image, strength, gen.width, gen.height, settings.temporal_smoothing)
         out, fmt = settings.output, self._sink_format
         packed = imageops.to_bytes((result.float() + 1) / 2, out.width, out.height, fmt)
         host = host_buffer(packed.numel())
@@ -391,6 +398,10 @@ class Runtime:
             finally:
                 if sink is not None:
                     sink.close()
+
+
+def _blend(settings: Settings) -> list[tuple[str, float]]:
+    return [(prompt.text, prompt.weight) for prompt in settings.prompts]
 
 
 def _rate(times: deque[float]) -> float:

@@ -1,5 +1,6 @@
 """Seam 1: the Runtime driven through the in-memory Transport with a fake Backend."""
 
+import itertools
 import time
 
 import pytest
@@ -7,7 +8,7 @@ import torch
 
 from streamturbo.frames import PixelFormat
 from streamturbo.runtime import IN_FLIGHT, Runtime
-from streamturbo.transports.memory import input_frame
+from streamturbo.transports.memory import MemoryTransports, input_frame
 from tests.conftest import FakeBackend
 
 RED, BLUE, BLACK = (200, 40, 40), (40, 40, 200), (0, 0, 0)
@@ -227,3 +228,196 @@ def test_status_reports_throughput_and_generation_time(small_settings, net):
     assert status.generation_ms_p95 >= status.generation_ms_p50
     assert 5 < status.throughput_fps < 50
     assert status.backend == "fake"
+
+
+def pixels(frame) -> torch.Tensor:
+    return frame.data.view(frame.height, frame.width, 4)[..., :3].float()
+
+
+def alternating_outputs(small_settings, net, count: int = 10, **changes) -> list:
+    """Output Frames for red and blue Input Frames in turn, pushed one at a time: the worst flicker there is."""
+    source, sink = net.add_source("cam"), net.sink(small_settings.sink)
+    with Runtime(small_settings.merged({"strength": 0.0, **changes}), FakeBackend(), net):
+        for seq in range(count):
+            source.push(input_frame(solid(320, 240, RED if seq % 2 == 0 else BLUE)))
+            sink.wait_for(lambda f, seq=seq: f.input_seq == seq)
+    return [next(f for f in sink.frames if f.input_seq == seq) for seq in range(count)]
+
+
+def flicker(frames) -> float:
+    """Mean absolute difference between consecutive Output Frames, 0-255."""
+    return sum((pixels(a) - pixels(b)).abs().mean().item() for a, b in itertools.pairwise(frames)) / (len(frames) - 1)
+
+
+def test_temporal_smoothing_off_follows_every_input_frame(small_settings, net):
+    frames = alternating_outputs(small_settings, net, temporal_smoothing=0.0)
+
+    assert all(close_to(f, RED if i % 2 == 0 else BLUE) for i, f in enumerate(frames))
+
+
+def test_temporal_smoothing_lowers_frame_to_frame_difference(small_settings, net):
+    off = flicker(alternating_outputs(small_settings, net, temporal_smoothing=0.0)[2:])
+    on = flicker(alternating_outputs(small_settings, MemoryTransports(), temporal_smoothing=0.5)[2:])
+
+    assert on < off / 2  # an even blend of each frame with the last thirds the swing
+
+
+def test_temporal_smoothing_settles_on_a_still_input(small_settings, net):
+    source, sink = net.add_source("cam", repeat_fps=100), net.sink(small_settings.sink)
+    with Runtime(small_settings.merged({"strength": 0.0, "temporal_smoothing": 0.5}), FakeBackend(), net):
+        source.push(input_frame(solid(320, 240, BLUE)))
+        sink.wait_for(lambda f: len(sink.frames) >= 3)
+        source.push(input_frame(solid(320, 240, RED)))
+        sink.wait_for(lambda f: close_to(f, RED))
+
+
+def test_strength_moves_in_steps_of_one_hundredth(small_settings, net):
+    runtime = Runtime(small_settings, FakeBackend(), net)
+    runtime.update(strength=0.456)
+
+    assert runtime.settings()[0].strength == 0.46
+
+
+def distance_from(frames, rgb: tuple[int, int, int]) -> list[float]:
+    """How far each Output Frame strays from a solid colour: the Seed's noise grows with Strength."""
+    return [(pixels(f) - torch.tensor(rgb, dtype=torch.float32)).abs().mean().item() for f in frames]
+
+
+def test_strength_glides_to_a_new_value_over_the_glide_time(small_settings, net):
+    source, sink = net.add_source("cam", repeat_fps=200), net.sink(small_settings.sink)
+    settings = small_settings.merged({"strength": 0.0, "strength_glide": 0.4})
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        source.push(input_frame(solid(320, 240, RED)))
+        sink.wait_for(lambda f: True)
+        version = runtime.update(strength=0.5)
+        time.sleep(0.8)
+
+    distances = distance_from([f for f in sink.frames if f.settings_version == version], RED)
+    assert distances[0] < distances[-1] / 2  # the first frames are still close to Strength 0
+    assert len(set(distances)) > 5  # in steps, not a jump
+    assert all(a <= b + 0.5 for a, b in itertools.pairwise(distances))  # never backwards
+    assert distances[-1] == distances[-2]  # settled at the new Strength
+
+
+GREY = (128, 128, 128)
+SHADES = {"dark": -0.9, "light": 0.9, "plain": 0.0}  # how far the fake UNet darkens or brightens per Prompt
+
+
+def brightness(frame) -> float:
+    return pixels(frame).mean().item()
+
+
+def output_after(runtime: Runtime, sink, changes=None, /, **fields):
+    version = runtime.update(changes, **fields)
+    return sink.wait_for(lambda f: f.settings_version == version)
+
+
+@pytest.fixture
+def shaded(small_settings, net):
+    """A Runtime whose fake Backend shades frames by Prompt, at a low Strength so the noise stays small."""
+    backend = FakeBackend()
+    backend.shades = SHADES
+    source, sink = net.add_source("cam", repeat_fps=200), net.sink(small_settings.sink)
+    settings = small_settings.merged({"strength": 0.1, "prompts": [{"text": "plain", "weight": 1.0}]})
+    with Runtime(settings, backend, net) as runtime:
+        source.push(input_frame(solid(320, 240, GREY)))
+        sink.wait_for(lambda f: True)
+        yield runtime, sink
+
+
+def blend(*entries: tuple[str, float]) -> list[dict]:
+    return [{"text": text, "weight": weight} for text, weight in entries]
+
+
+def test_prompt_blend_mixes_weighted_prompts_as_one(shaded):
+    runtime, sink = shaded
+    dark = brightness(output_after(runtime, sink, prompts=blend(("dark", 1))))
+    light = brightness(output_after(runtime, sink, prompts=blend(("light", 1))))
+    plain = brightness(output_after(runtime, sink, prompts=blend(("plain", 1))))
+    even = brightness(output_after(runtime, sink, prompts=blend(("dark", 1), ("light", 1))))
+    doubled = brightness(output_after(runtime, sink, prompts=blend(("dark", 2), ("light", 2))))
+    mostly_light = brightness(output_after(runtime, sink, prompts=blend(("dark", 1), ("light", 3))))
+    unweighted = brightness(output_after(runtime, sink, prompts=blend(("dark", 1), ("light", 0))))
+
+    assert dark < plain - 10 and light > plain + 10
+    assert abs(even - plain) < 1 and abs(doubled - even) < 1  # weights count relative to their total
+    assert plain + 5 < mostly_light < light - 5
+    assert abs(unweighted - dark) < 1
+
+
+def test_prompt_change_transitions_over_the_set_duration(shaded):
+    runtime, sink = shaded
+    dark = brightness(output_after(runtime, sink, prompts=blend(("dark", 1))))
+    light = brightness(output_after(runtime, sink, prompts=blend(("light", 1))))
+    output_after(runtime, sink, prompts=blend(("dark", 1)))
+    output_after(runtime, sink, prompt_transition=0.4)
+    version = runtime.update(prompts=blend(("light", 1)))
+    time.sleep(0.8)
+    seen = [brightness(f) for f in list(sink.frames) if f.settings_version == version]
+
+    assert abs(seen[0] - dark) < 5  # starts where the last Prompt Blend left off
+    assert len({round(b) for b in seen}) > 5  # in steps, not a snap
+    assert all(a <= b + 1 for a, b in itertools.pairwise(seen))
+    assert abs(seen[-1] - light) < 1
+
+
+def test_a_change_during_a_transition_carries_on_from_where_the_blend_is(shaded):
+    runtime, sink = shaded
+    output_after(runtime, sink, prompts=blend(("dark", 1)))
+    output_after(runtime, sink, prompt_transition=0.6)
+    towards_light = runtime.update(prompts=blend(("light", 1)))
+    time.sleep(0.3)
+    back = runtime.update(prompts=blend(("dark", 1)))
+    sink.wait_for(lambda f: f.settings_version == back)
+    time.sleep(0.2)
+    frames = [f for f in list(sink.frames) if f.settings_version in (towards_light, back)]
+
+    steps = [abs(brightness(a) - brightness(b)) for a, b in itertools.pairwise(frames)]
+    assert max(steps) < 5  # no jump when the target changes halfway
+
+
+def test_a_single_prompt_is_still_accepted(small_settings, net):
+    runtime = Runtime(small_settings, FakeBackend(), net)
+    runtime.update(prompt="ice")
+
+    assert [p.model_dump() for p in runtime.settings()[0].prompts] == blend(("ice", 1.0))
+
+
+def test_prompts_are_changed_by_index_or_replaced_from_json(small_settings, net):
+    runtime = Runtime(small_settings.merged({"prompts": blend(("ice", 1))}), FakeBackend(), net)
+    runtime.update({"prompts": {"1": {"text": "fire"}}})  # the next index adds a Prompt, weight 1
+    runtime.update({"prompts": {"0": {"weight": 0.5}}})
+    runtime.update({"prompts": {"2": {"weight": 0.25}}})  # a Prompt added by its weight starts empty
+    assert [p.model_dump() for p in runtime.settings()[0].prompts] == blend(("ice", 0.5), ("fire", 1.0), ("", 0.25))
+
+    runtime.update(prompts='[{"text": "smoke", "weight": 2}]')
+    assert [p.model_dump() for p in runtime.settings()[0].prompts] == blend(("smoke", 2.0))
+
+
+def test_invalid_prompt_blends_are_rejected(small_settings, net):
+    runtime = Runtime(small_settings, FakeBackend(), net)
+    with pytest.raises(ValueError, match="prompts"):
+        runtime.update(prompts=[])
+    with pytest.raises(ValueError, match="weight"):
+        runtime.update(prompts=blend(("ice", 0), ("fire", 0)))
+    with pytest.raises(ValueError, match="prompts"):
+        runtime.update({"prompts": {"3": {"text": "too far"}}})
+    with pytest.raises(ValueError, match="prompts"):
+        runtime.update(prompts="not json")
+
+    assert runtime.settings() == (small_settings, 0)
+
+
+@pytest.mark.parametrize(("fit_mode", "bars"), [("fit", True), ("fill", False), ("stretch", False)])
+def test_a_non_square_generation_resolution_fits_and_upscales(small_settings, net, fit_mode, bars):
+    source, sink = net.add_source("cam"), net.sink(small_settings.sink)
+    wide = {"generation": {"width": 512, "height": 256}, "output": {"width": 1024, "height": 512}}
+    with Runtime(small_settings.merged({**wide, "fit_mode": fit_mode, "strength": 0.0}), FakeBackend(), net):
+        source.push(input_frame(solid(320, 240, RED)))  # 4:3 into 2:1
+        out = sink.wait_for(lambda f: True)
+
+    image = pixels(out)
+    assert (out.width, out.height) == (1024, 512)
+    centre, edges = image[:, 384:640].mean(dim=(0, 1)), torch.cat((image[:, :128], image[:, -128:]), dim=1)
+    assert all(abs(a - b) <= 3 for a, b in zip(centre.tolist(), RED, strict=True))
+    assert (edges.mean().item() < 3) if bars else (edges.mean(dim=(0, 1)) - torch.tensor(RED)).abs().max() <= 3

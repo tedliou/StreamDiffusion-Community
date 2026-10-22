@@ -10,6 +10,7 @@ from playwright.sync_api import Browser, Page, expect, sync_playwright
 from streamturbo.backends import BestBackend
 from streamturbo.control import Control
 from streamturbo.control.web import WebServer
+from streamturbo.model_spec import GLASS_PROMPT
 from streamturbo.presets import PresetStore
 from streamturbo.runtime import Runtime
 from streamturbo.settings import Settings, describe
@@ -122,3 +123,25 @@ def test_engine_build_progress_shows_until_the_fast_backend_takes_over(
         finally:
             page.close()
             web.stop()
+
+
+def test_the_prompt_blend_adds_weighs_and_removes_prompts(page: Page, served: tuple[Runtime, MemorySink, str]):
+    runtime = served[0]
+
+    def blend() -> list[tuple[str, float]]:
+        return [(prompt.text, prompt.weight) for prompt in runtime.settings()[0].prompts]
+
+    panel = page.locator('[data-path="prompts"]')
+    panel.get_by_role("button", name="Add Prompt").click()
+    wait_until(lambda: blend() == [(GLASS_PROMPT, 1.0), ("", 0.0)])  # a new Prompt changes nothing yet
+    second = panel.get_by_label("Prompt 2", exact=True)
+    second.fill("ice")
+    second.press("Control+Enter")
+    weight = panel.get_by_label("Prompt 2 Weight", exact=True)
+    weight.fill("0.5")
+    weight.press("Enter")
+    wait_until(lambda: blend() == [(GLASS_PROMPT, 1.0), ("ice", 0.5)])
+
+    panel.get_by_role("button", name="Remove Prompt 1").click()
+    wait_until(lambda: blend() == [("ice", 0.5)])
+    expect(panel.get_by_role("button", name="Remove Prompt 1")).to_be_disabled()  # a blend keeps one Prompt

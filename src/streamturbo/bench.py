@@ -194,7 +194,7 @@ def _measure(
         "input": str(image) if image else "synthetic",
         "strength": settings.strength,
         "seed": settings.seed,
-        "prompt": settings.prompt,
+        "prompts": [prompt.model_dump() for prompt in settings.prompts],
         "versions": _versions(),
     }
     return report, sink

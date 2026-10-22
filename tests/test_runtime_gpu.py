@@ -1,5 +1,6 @@
 """Seam 1 with the real sd-turbo PyTorch and TensorRT Backends (marked `gpu`, run locally)."""
 
+import itertools
 import os
 from pathlib import Path
 
@@ -57,7 +58,20 @@ def backend(request):
     return request.getfixturevalue(request.param)
 
 
-GLASS = Settings.model_validate({"source": {"transport": "spout", "name": "cam"}, "sink": {"transport": "spout"}})
+# Glass without Strength glide, Prompt transitions or Temporal Smoothing, so the first Output Frame of a change
+# shows all of it.
+GLASS = Settings.model_validate(
+    {
+        "source": {"transport": "spout", "name": "cam"},
+        "sink": {"transport": "spout"},
+        "strength_glide": 0.0,
+        "prompt_transition": 0.0,
+        "temporal_smoothing": 0.0,
+    }
+)
+FLICKER_REDUCTION = 0.85  # Temporal Smoothing at its default must cut flicker at least this much (measured 0.79)
+TRAIL_LIMIT = 2.5  # mean difference from unsmoothed output behind a fast pan, 0-255: measured 1.8 at the default
+# 0.2; at 0.3 (3.0) a soft fringe shows on moving edges
 
 
 @pytest.fixture
@@ -95,7 +109,7 @@ def test_prompt_and_strength_change_the_output(backend, glass):
     with Runtime(GLASS, backend, net) as runtime:
         base = output_for(runtime, sink)
         other_prompt = output_for(runtime, sink, prompt="a watercolor painting of a forest")
-        low = output_for(runtime, sink, prompt=GLASS.prompt, strength=0.2)
+        low = output_for(runtime, sink, prompts=GLASS.prompts, strength=0.2)
         high = output_for(runtime, sink, strength=0.9)
 
     assert difference(base, other_prompt) > 10
@@ -135,7 +149,70 @@ def test_glass_preset_matches_the_reference_image(backend):
     assert difference(output, reference) < REFERENCE_TOLERANCE
 
 
-# The ends of the Engine profile, a square and a portrait size: shape-specific Engine bugs show up at some sizes only.
-@pytest.mark.parametrize("size", [(1024, 768), (256, 256), (1024, 1024), (512, 768)])
+# The ends of the Engine profile, a square, a portrait and a 16:9 size: shape-specific Engine bugs show up at some
+# sizes only.
+@pytest.mark.parametrize("size", [(1024, 768), (256, 256), (1024, 1024), (512, 768), (1024, 576)])
 def test_tensorrt_output_matches_pytorch(pytorch, tensorrt, size):
     assert difference(glass_output(tensorrt, *size), glass_output(pytorch, *size)) < TENSORRT_TOLERANCE
+
+
+def clip_outputs(backend, clip: list[torch.Tensor], **changes: object) -> list[torch.Tensor]:
+    """Glass Output Frames for a clip of 1024x768 Input Frames, pushed one at a time so none is dropped."""
+    net = MemoryTransports()
+    source = net.add_source("cam")
+    settings = GLASS.merged(changes)
+    sink = net.sink(settings.sink)
+    with Runtime(settings, backend, net):
+        for seq, frame in enumerate(clip):
+            source.push(input_frame(frame))
+            sink.wait_for(lambda f, seq=seq: f.input_seq == seq, timeout=60)
+    frames = {f.input_seq: f for f in sink.frames}
+    return [frames[seq].data.view(768, 1024, 4)[..., :3].float() for seq in range(len(clip))]
+
+
+def still_clip(count: int = 20) -> list[torch.Tensor]:
+    """The test pattern under camera noise: the input that makes sd-turbo flicker most on a still scene."""
+    pattern, generator = synthetic_frame(1024, 768), torch.Generator().manual_seed(0)
+    noise = [torch.randn(768, 1024, 3, generator=generator) * 6 for _ in range(count)]
+    return [torch.cat(((pattern[..., :3] + n).clamp(0, 255).to(torch.uint8), pattern[..., 3:]), -1) for n in noise]
+
+
+def pan_clip(count: int = 20) -> list[torch.Tensor]:
+    """The test pattern panning 8 px per frame: fast enough that blending with the last frame would trail."""
+    return [torch.roll(synthetic_frame(1024, 768), shifts=8 * i, dims=1) for i in range(count)]
+
+
+def flicker(frames: list[torch.Tensor]) -> float:
+    """Mean frame-to-frame difference, 0-255, once Temporal Smoothing has had a few frames to settle."""
+    pairs = list(itertools.pairwise(frames[5:]))
+    return sum(difference(a, b) for a, b in pairs) / len(pairs)
+
+
+def test_temporal_smoothing_reduces_flicker_without_a_visible_trail(backend):
+    default = Settings().temporal_smoothing
+    assert default > 0
+    clip = still_clip()
+    off, on = clip_outputs(backend, clip), clip_outputs(backend, clip, temporal_smoothing=default)
+    assert flicker(on) < FLICKER_REDUCTION * flicker(off)
+
+    clip = pan_clip()
+    off, on = clip_outputs(backend, clip), clip_outputs(backend, clip, temporal_smoothing=default)
+    trail = sum(difference(a, b) for a, b in zip(on[5:], off[5:], strict=True)) / len(clip[5:])
+    assert trail < TRAIL_LIMIT
+
+
+def test_a_wide_generation_resolution_fits_and_upscales(backend):
+    """A 4:3 Input Frame into 1024x576 with Fit Mode fit, upscaled to 1920x1080 for the Sink."""
+    net = MemoryTransports()
+    net.add_source("cam", repeat_fps=60).push(input_frame(synthetic_frame(1024, 768)))
+    wide = {"generation": {"width": 1024, "height": 576}, "output": {"width": 1920, "height": 1080}}
+    settings = GLASS.merged({**wide, "fit_mode": "fit", "strength": 0.0})
+    sink = net.sink(settings.sink)
+    with Runtime(settings, backend, net) as runtime:
+        frame = sink.wait_for(lambda _: True, timeout=60)
+        glass = output_for(runtime, sink, strength=GLASS.strength)
+
+    image = frame.data.view(1080, 1920, 4)[..., :3].float()
+    assert (frame.width, frame.height) == (1920, 1080) and glass.shape == (1080, 1920, 3)
+    assert image[:, :200].mean() < 10 and image[:, -200:].mean() < 10  # pillarboxed: 240 px bars each side
+    assert image[:, 400:1520].mean() > 60  # with the picture between them

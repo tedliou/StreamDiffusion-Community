@@ -466,17 +466,51 @@ select:hover {
   flex: 1;
 }
 
-.prompt {
+.prompt-blend {
   display: flex;
   flex-direction: column;
   gap: 8px;
   align-items: flex-start;
 }
 
+.prompt-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prompt-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.prompt-row-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.prompt-weight-label {
+  color: var(--gray-900);
+  font-size: 13px;
+}
+
 .slider {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.prompt-row-foot .slider {
+  flex: 1;
 }
 
 .number-with-unit {

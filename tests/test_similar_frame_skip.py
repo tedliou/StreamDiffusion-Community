@@ -1,11 +1,13 @@
 """Seam 1: Similar Frame Skip, driven through the in-memory Transport with a fake Backend."""
 
+import time
+
 import torch
 
 from streamturbo.runtime import IN_FLIGHT, Runtime
 from streamturbo.transports.memory import input_frame
 from tests.conftest import FakeBackend
-from tests.test_runtime import BLUE, RED, close_to, solid, wait_until
+from tests.test_runtime import BLUE, RED, close_to, distance_from, solid, wait_until
 
 
 def skipping(settings, threshold=0.02, max_skips=1000):
@@ -59,3 +61,16 @@ def test_similar_frame_skip_is_off_at_threshold_zero(small_settings, net):
         wait_until(lambda: runtime.status().frames_sent >= 20)
 
     assert runtime.status().frames_skipped == 0
+
+
+def test_skipping_waits_for_a_strength_glide_to_finish(small_settings, net):
+    source, sink = net.add_source("cam", repeat_fps=100), net.sink(small_settings.sink)
+    settings = skipping(small_settings.merged({"strength": 0.0, "strength_glide": 0.3}), threshold=0.5)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        source.push(input_frame(solid(320, 240, RED)))
+        wait_until(lambda: runtime.status().frames_skipped >= 5)
+        version = runtime.update(strength=0.5)
+        time.sleep(0.6)
+
+    gliding = distance_from([f for f in sink.frames if f.settings_version == version], RED)
+    assert len(set(gliding)) > 5  # every step of the glide was generated, not repeated

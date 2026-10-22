@@ -1,9 +1,13 @@
 """OSC Control Surface: addresses mirror Settings paths, for TouchDesigner's OSC Out CHOP/DAT.
 
 In:  `/streamturbo/<setting path>` with one value, e.g. `/streamturbo/strength 0.5`;
+     list items by index, e.g. `/streamturbo/prompts/1/weight 0.5` (the next index adds an item), or a whole
+     list as JSON, `/streamturbo/prompts '[{"text": "ice", "weight": 1}]'`; `/streamturbo/prompt "ice"` sets a
+     single Prompt;
      `/streamturbo/preset/recall "Glass"`, `/streamturbo/preset/save "name"`;
      `/streamturbo/sync` re-sends all Settings.
-Out: every Setting at its own address whenever Settings change (from any Control Surface),
+Out: every Setting at its own address whenever Settings change (from any Control Surface), list items by
+     index (`prompts/0/text`),
      `/streamturbo/status/<field>` a few times a second (nested fields as `status/engines/state`),
      and `/streamturbo/error "message"` for a rejected message.
 """
@@ -97,6 +101,8 @@ class OscServer:
         for key, value in settings.items():
             if isinstance(value, dict):
                 self.send_settings(value, f"{prefix}{key}/")
+            elif isinstance(value, list):
+                self.send_settings({str(index): item for index, item in enumerate(value)}, f"{prefix}{key}/")
             else:
                 self._client.send_message(f"{prefix}{key}", value)
 
