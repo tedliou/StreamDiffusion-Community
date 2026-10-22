@@ -58,8 +58,8 @@ def backend(request):
     return request.getfixturevalue(request.param)
 
 
-# Glass without Strength glide, Prompt transitions or Temporal Smoothing, so the first Output Frame of a change
-# shows all of it.
+# Glass without Strength glide, Prompt transitions, Temporal Smoothing or Temporal Coherence, so the first Output
+# Frame of a change shows all of it.
 GLASS = Settings.model_validate(
     {
         "source": {"transport": "spout", "name": "cam"},
@@ -67,11 +67,16 @@ GLASS = Settings.model_validate(
         "strength_glide": 0.0,
         "prompt_transition": 0.0,
         "temporal_smoothing": 0.0,
+        "temporal_coherence": False,
     }
 )
 FLICKER_REDUCTION = 0.85  # Temporal Smoothing at its default must cut flicker at least this much (measured 0.79)
 TRAIL_LIMIT = 2.5  # mean difference from unsmoothed output behind a fast pan, 0-255: measured 1.8 at the default
 # 0.2; at 0.3 (3.0) a soft fringe shows on moving edges
+# Temporal Coherence must cut warp error (Output Frames vs the previous one moved with the input) at least this much;
+# measured 0.91 on the still noisy test pattern and 0.95 behind its 8 px pan (0.72 and 0.89 with Temporal Smoothing).
+COHERENCE_STILL, COHERENCE_PAN = 0.95, 0.98
+SHARPNESS_KEPT = 0.97  # of the detail without Temporal Coherence (measured 1.0 in the spike)
 
 
 @pytest.fixture
@@ -199,6 +204,32 @@ def test_temporal_smoothing_reduces_flicker_without_a_visible_trail(backend):
     off, on = clip_outputs(backend, clip), clip_outputs(backend, clip, temporal_smoothing=default)
     trail = sum(difference(a, b) for a, b in zip(on[5:], off[5:], strict=True)) / len(clip[5:])
     assert trail < TRAIL_LIMIT
+
+
+def warp_error(frames: list[torch.Tensor], step: int) -> float:
+    """How much each Output Frame differs from the previous one moved along with the Input Frames, 0-255.
+
+    The clips move by a known `step` pixels per frame and wrap around, so nothing is occluded.
+    """
+    pairs = list(itertools.pairwise(frames[5:]))
+    return sum(difference(b, torch.roll(a, shifts=step, dims=1)) for a, b in pairs) / len(pairs)
+
+
+LAPLACE = torch.tensor([[0.0, 1, 0], [1, -4, 1], [0, 1, 0]]).view(1, 1, 3, 3)
+
+
+def sharpness(frames: list[torch.Tensor]) -> float:
+    """Mean absolute Laplacian of the grey picture: fine detail, which blending away boiling would soften."""
+    grey = [f.mean(dim=-1)[None, None] for f in frames[5:]]
+    return sum(torch.nn.functional.conv2d(g, LAPLACE).abs().mean().item() for g in grey) / len(grey)
+
+
+def test_temporal_coherence_keeps_detail_in_place_without_softening_it(pytorch):
+    assert Settings().temporal_coherence
+    for clip, step, limit in ((still_clip(), 0, COHERENCE_STILL), (pan_clip(), 8, COHERENCE_PAN)):
+        off, on = clip_outputs(pytorch, clip), clip_outputs(pytorch, clip, temporal_coherence=True)
+        assert warp_error(on, step) < limit * warp_error(off, step)
+        assert sharpness(on) > SHARPNESS_KEPT * sharpness(off)
 
 
 def test_a_wide_generation_resolution_fits_and_upscales(backend):

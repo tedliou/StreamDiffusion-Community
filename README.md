@@ -95,6 +95,7 @@ strength = 0.68        # 0 只做編解碼，1 完全依提示詞生成（不參
 strength_glide = 0.25  # strength 改變時花幾秒滑到新值，所有 Control Surface 都一樣；0 表示直接跳過去
 seed = 2               # 固定雜訊；調整 strength 不會改變雜訊
 temporal_smoothing = 0.2  # 每格保留多少上一格（0–0.95）以減少閃爍；0 表示關閉，太高時快速移動會拖影
+temporal_coherence = true # 每格生成時也參考上一格的特徵，讓細節留在原位不亂跳；不會變糊
 fit_mode = "fill"      # 輸入比例不同時：fill 裁切填滿、fit 加黑邊、stretch 拉伸
 
 [source]
@@ -121,6 +122,8 @@ max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢�
 
 只有一個提示詞時也可以寫 `prompt = "..."`，舊版的設定檔和 Preset 會自動轉成只有這一個提示詞的 Prompt Blend。
 
+Temporal Coherence 和 Temporal Smoothing 互相獨立，可以單獨或一起用。Temporal Smoothing 混合前後兩格的畫面，開越高越穩但會變糊、拖影；Temporal Coherence 則讓模型生成時參考上一格的內部特徵，原本就有的細節傾向留在原位，不會每格重新長一次，清晰度不變，生成時間只多幾個百分點。換 Source、生成解析度或 fit mode 時兩者都會重新開始。目前只在 PyTorch Backend 生效；TensorRT 版本在 [#16](https://github.com/tedliou/StreamTurbo/issues/16) 補上，在那之前用 TensorRT 時這個設定沒有作用。
+
 生成解析度不必是正方形，例如 1024×576（16:9）。輸入比例不同時依 `fit_mode` 處理，輸出解析度可以再放大，例如 1920×1080。
 
 `backend` 預設 `"auto"`：先用 PyTorch 輸出，背景建好 TensorRT Engine 後自動切換。設成 `"pytorch"` 可排除 TensorRT 以便診斷問題。
@@ -131,7 +134,7 @@ max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢�
 
 | 類別 | 欄位 | 套用方式 |
 |---|---|---|
-| Live | `prompts`、`prompt_transition`、`strength`、`strength_glide`、`seed`、`temporal_smoothing`、`similar_frame_skip.*` | 下一格就開始生效，輸出不中斷；`prompts` 和 `strength` 依設定的時間漸變 |
+| Live | `prompts`、`prompt_transition`、`strength`、`strength_glide`、`seed`、`temporal_smoothing`、`temporal_coherence`、`similar_frame_skip.*` | 下一格就開始生效，輸出不中斷；`prompts` 和 `strength` 依設定的時間漸變 |
 | Reset | `source.*`、`sink.*`、`generation.*`、`output.*`、`fit_mode` | 重新開啟 Source 或 Sink、重配緩衝區，輸出會停頓一下 |
 | Rebuild | `backend` | 需要的 TensorRT Engine 建好後才完全生效；建置期間由 PyTorch 繼續輸出 |
 
@@ -154,7 +157,7 @@ max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢�
 
 ## Preset
 
-Preset 是一組外觀：Prompt Blend、strength、seed、Temporal Smoothing、漸變時間、fit mode、生成解析度與輸出解析度等，不含 Source、Sink 和 Backend，所以換場地也能直接套用。套用 Preset 時，提示詞和 strength 也會依設定的時間漸變過去。
+Preset 是一組外觀：Prompt Blend、strength、seed、Temporal Smoothing、Temporal Coherence、漸變時間、fit mode、生成解析度與輸出解析度等，不含 Source、Sink 和 Backend，所以換場地也能直接套用。套用 Preset 時，提示詞和 strength 也會依設定的時間漸變過去。
 
 - 內建的 `Glass` 唯讀，放在程式內。
 - 自己存的 Preset 是 TOML 檔，放在專案資料夾的 `presets\`，可以直接複製或備份。名稱不分大小寫。
@@ -167,6 +170,7 @@ StreamTurbo 在 7000 埠接收 OSC，並把變更和狀態回報到 127.0.0.1:70
 | 方向 | 位址 | 值 |
 |---|---|---|
 | 收 | `/streamturbo/strength`、`/streamturbo/seed`、`/streamturbo/temporal_smoothing`、`/streamturbo/prompt_transition`…… | 一個值 |
+| 收 | `/streamturbo/temporal_coherence` | 0 關閉、1 開啟；回報時也用 0 或 1 |
 | 收 | `/streamturbo/prompts/0/text`、`/streamturbo/prompts/0/weight` | 依索引改 Prompt Blend 的某一項；用下一個索引（目前項數）會新增一項，權重預設 1 |
 | 收 | `/streamturbo/prompts` | 整個 Prompt Blend 的 JSON 字串，例如 `'[{"text": "ice", "weight": 1}]'`；要移除項目時用這個（移除後 TouchDesigner 端 OSC In 裡舊的較大索引值不會自動清掉） |
 | 收 | `/streamturbo/prompt` | 一個提示詞，取代整個 Prompt Blend |
@@ -211,7 +215,7 @@ Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看�
 **範例元件**：[`touchdesigner/StreamTurbo.tox`](touchdesigner/StreamTurbo.tox) 把上面的步驟包成一個元件，拖進專案即可使用。它的參數頁可以：
 
 - 選擇 Transport（NDI 或 Spout），同時切換送出、接收和 StreamTurbo 的 Source 與 Sink
-- 調整 Prompt（Prompt Blend 的第一項）、Strength、Seed，套用或儲存 Preset（經 OSC）
+- 調整 Prompt（Prompt Blend 的第一項）、Strength、Seed，開關 Temporal Coherence，套用或儲存 Preset（經 OSC）
 - 在 Status 頁看來源狀態、每秒格數和生成時間
 - 按 Measure Latency 量測 Round-trip Latency
 
@@ -235,12 +239,13 @@ Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看�
 | Web Panel 打不開 | 確認 `streamturbo run` 還在執行，或埠號被占用時改用 `--port` |
 | 平板顯示需要 access token | 用 `--lan` 啟動時印出的完整網址，包含 `?token=` |
 | Spout Out 顯示 Sender Name 已被使用 | 換一個名稱，或重新啟動 TouchDesigner 釋放殘留的名稱 |
+| Measure Latency 逾時，或 StreamTurbo 的輸入畫面停住不動 | 在同一個 TouchDesigner 工作階段裡刪掉或重建過 Spout Out 時，舊名稱會殘留一個凍結的發送端，新的會變成 `名稱_2`（`streamturbo run --list-sources` 看得到）。換一個 Sender Name 後重新選一次 Transport，或重新啟動 TouchDesigner |
 | 顯示找不到 NVIDIA 驅動程式 | 從 [NVIDIA 官網](https://www.nvidia.com/Download/index.aspx) 安裝 580 以上的驅動程式 |
 | uv 安裝失敗 | 確認網路連線，或手動安裝 [uv](https://docs.astral.sh/uv/) 後重新執行 |
 | `doctor` 顯示 NOT READY | 依照 PROBLEM 那幾行的說明處理 |
 | 狀態一直是 `waiting` | 用 `streamturbo run --list-sources` 確認來源名稱，NDI 另需確認防火牆允許 |
 | 每秒格數偏低 | 確認沒有其他程式占用顯示卡，並用 `doctor` 檢查功率上限 |
-| 輸出畫面閃爍 | 提高 `temporal_smoothing`（例如 0.3），或降低 `strength` |
+| 輸出畫面閃爍、細節亂跳 | 確認 `temporal_coherence` 開啟；再提高 `temporal_smoothing`（例如 0.3），或降低 `strength` |
 | 快速移動時有拖影 | 降低 `temporal_smoothing`，0 表示關閉 |
 | 改了提示詞或 strength 卻慢慢才變 | 這是 `prompt_transition` 和 `strength_glide` 的漸變；要立刻切換時設成 0 |
 | 新增的提示詞沒有作用 | 新增的提示詞權重是 0，把權重調高才會混進畫面 |

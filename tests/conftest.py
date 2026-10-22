@@ -54,6 +54,15 @@ class FakeBackend:
             raise RuntimeError("CUDA error: an illegal memory access was encountered")
         return torch.full_like(latents, -prompt_embeds.mean().item())  # predicting less noise brightens
 
+    def coherent_unet(
+        self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor, bank: object | None
+    ) -> tuple[torch.Tensor, object]:
+        """Temporal Coherence: with a bank (the previous noisy latents), the prediction leans halfway towards it."""
+        eps = self.unet(latents, timestep, prompt_embeds)
+        if isinstance(bank, torch.Tensor) and bank.shape == latents.shape:
+            eps = eps + (latents - bank) / 2
+        return eps, latents
+
 
 @pytest.fixture
 def small_settings() -> Settings:

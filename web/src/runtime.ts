@@ -6,7 +6,7 @@ export type SettingClass = "live" | "reset" | "rebuild";
 export interface Field {
   path: string;
   class: SettingClass;
-  type: "integer" | "number" | "string" | "enum" | "list";
+  type: "boolean" | "integer" | "number" | "string" | "enum" | "list";
   default: unknown;
   options?: string[];
   minimum?: number;

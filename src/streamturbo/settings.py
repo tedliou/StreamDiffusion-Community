@@ -87,6 +87,8 @@ class Settings(_Model):
     seed: int = _setting("live", 2, ge=0, lt=2**31)  # OSC integers are 32-bit
     # How much of the previous Generation each new one keeps, 0-0.95; 0 turns Temporal Smoothing off.
     temporal_smoothing: float = _setting("live", 0.2, ge=0.0, le=0.95)  # 0.2: no visible trail behind a fast pan
+    # Each Generation also attends to the previous one's features, so detail stays in place between Output Frames.
+    temporal_coherence: bool = _setting("live", True)
     similar_frame_skip: SimilarFrameSkip = SimilarFrameSkip()
     backend: BackendChoice = _setting("rebuild", "auto")
 
@@ -183,7 +185,7 @@ def _describe(model: type[BaseModel], prefix: str) -> list[dict[str, Any]]:
         elif typing.get_origin(annotation) is Literal:
             field |= {"type": "enum", "options": list(typing.get_args(annotation))}
         else:
-            field["type"] = {int: "integer", float: "number", str: "string"}[annotation]  # pyright: ignore[reportArgumentType]
+            field["type"] = {bool: "boolean", int: "integer", float: "number", str: "string"}[annotation]  # pyright: ignore[reportArgumentType]
         for constraint in info.metadata:
             match constraint:
                 case annotated_types.Ge(ge=bound) | annotated_types.Gt(gt=bound):

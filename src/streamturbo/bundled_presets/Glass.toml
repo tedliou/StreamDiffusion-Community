@@ -5,6 +5,7 @@ strength_glide = 0.25
 prompt_transition = 1.0
 seed = 2
 temporal_smoothing = 0.2
+temporal_coherence = true
 
 [[prompts]]
 text = "transparent translucent glass-like refraction sharp flower jellyfish scales claw petal leaf tail tree ,slime mold, Vibrant, glossy highlights, ethereal glow, masterpiece, 8k, best quality, high resolution, hdr, bloom"

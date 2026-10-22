@@ -9,7 +9,15 @@ import { groupText, text } from "./strings";
 const GROUPS: { key: keyof typeof groupText; paths: string[] }[] = [
   {
     key: "look",
-    paths: ["prompts", "prompt_transition", "strength", "strength_glide", "seed", "temporal_smoothing"],
+    paths: [
+      "prompts",
+      "prompt_transition",
+      "strength",
+      "strength_glide",
+      "seed",
+      "temporal_smoothing",
+      "temporal_coherence",
+    ],
   },
   { key: "source", paths: ["source.transport", "source.name"] },
   { key: "sink", paths: ["sink.transport", "sink.name", "sink.fps"] },

@@ -20,6 +20,10 @@ export const settingText: Record<string, { label: string; help?: string; unit?: 
     label: "Temporal Smoothing",
     help: "How much of the previous Generation each new one keeps, to reduce flicker. 0 turns it off; high values trail behind fast motion.",
   },
+  temporal_coherence: {
+    label: "Temporal Coherence",
+    help: "Each Generation also looks at the previous one, so detail stays in place instead of shimmering. Costs a few percent of Generation Time and keeps the picture sharp; combines with Temporal Smoothing.",
+  },
   seed: { label: "Seed", help: "Fixes the noise. Changing Strength never re-rolls it." },
   "source.transport": { label: "Transport" },
   "source.name": { label: "Name", help: "Leave empty to use the first visible sender." },

@@ -80,6 +80,7 @@ function renderControl(
   suggestions?: string[],
 ) {
   if (field.type === "enum") return <Segmented id={id} field={field} value={String(value)} commit={commit} />;
+  if (field.type === "boolean") return <Switch id={id} value={Boolean(value)} commit={commit} />;
   if (field.type === "string")
     return <TextInput id={id} value={String(value ?? "")} commit={commit} suggestions={suggestions} />;
   if (field.path === "seed") return <SeedInput id={id} field={field} value={Number(value)} commit={commit} />;
@@ -112,6 +113,20 @@ function Segmented({
         </label>
       ))}
     </div>
+  );
+}
+
+function Switch({ id, value, commit }: { id: string; value: boolean; commit: (next: unknown) => Promise<boolean> }) {
+  return (
+    <input
+      type="checkbox"
+      role="switch"
+      className="switch"
+      id={id}
+      checked={value}
+      aria-checked={value}
+      onChange={(event) => void commit(event.target.checked)}
+    />
   );
 }
 

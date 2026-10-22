@@ -65,6 +65,10 @@ The number that fixes the noise used for Generation, so the same Input Frame and
 Blending each Generation with the previous one to reduce flicker between consecutive Output Frames.
 _Avoid_: Frame blending, stabilisation
 
+**Temporal Coherence**:
+Letting each Generation attend to the previous Generation's features, so detail stays in place between Output Frames instead of being re-invented.
+_Avoid_: Feature bank, StreamV2V (paper terms)
+
 **Similar Frame Skip**:
 Reusing the previous Output Frame instead of generating when the Input Frame has barely changed.
 _Avoid_: SSF, stochastic similarity filter (paper term), idle mode

@@ -103,8 +103,8 @@ class OscServer:
                 self.send_settings(value, f"{prefix}{key}/")
             elif isinstance(value, list):
                 self.send_settings({str(index): item for index, item in enumerate(value)}, f"{prefix}{key}/")
-            else:
-                self._client.send_message(f"{prefix}{key}", value)
+            else:  # a switch as 0 or 1, like a TouchDesigner toggle: not every OSC reader knows the T/F tags
+                self._client.send_message(f"{prefix}{key}", int(value) if isinstance(value, bool) else value)
 
     def _push_status(self) -> None:
         while not self._stop.wait(STATUS_INTERVAL):
