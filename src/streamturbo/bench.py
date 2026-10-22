@@ -172,6 +172,7 @@ def _measure(
         status = runtime.status()
     machine = doctor.collect()
     card = machine.gpus[0] if machine.gpus else None
+    int8 = option.backend == "tensorrt" and option.precision == "int8"
     report = {
         "workload": "glass",
         "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -188,6 +189,7 @@ def _measure(
         "driver": machine.driver_version,
         "backend": status.backend,
         "unet_precision": option.precision if option.backend == "tensorrt" else "fp16",
+        "temporal_coherence": settings.temporal_coherence and not int8,
         "generation_resolution": [gw, gh],
         "output_resolution": [ow, oh],
         "output_format": sink.format.value,
@@ -197,6 +199,8 @@ def _measure(
         "prompts": [prompt.model_dump() for prompt in settings.prompts],
         "versions": _versions(),
     }
+    if int8 and settings.temporal_coherence:
+        report["temporal_coherence_note"] = "requested, but the INT8 UNet has no Temporal Coherence"
     return report, sink
 
 

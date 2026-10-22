@@ -122,7 +122,7 @@ max_skips = 30         # 連續跳過這麼多格後強制生成一次，緩慢�
 
 只有一個提示詞時也可以寫 `prompt = "..."`，舊版的設定檔和 Preset 會自動轉成只有這一個提示詞的 Prompt Blend。
 
-Temporal Coherence 和 Temporal Smoothing 互相獨立，可以單獨或一起用。Temporal Smoothing 混合前後兩格的畫面，開越高越穩但會變糊、拖影；Temporal Coherence 則讓模型生成時參考上一格的內部特徵，原本就有的細節傾向留在原位，不會每格重新長一次，清晰度不變，生成時間只多幾個百分點。換 Source、生成解析度或 fit mode 時兩者都會重新開始。目前只在 PyTorch Backend 生效；TensorRT 版本在 [#16](https://github.com/tedliou/StreamTurbo/issues/16) 補上，在那之前用 TensorRT 時這個設定沒有作用。
+Temporal Coherence 和 Temporal Smoothing 互相獨立，可以單獨或一起用。Temporal Smoothing 混合前後兩格的畫面，開越高越穩但會變糊、拖影；Temporal Coherence 則讓模型生成時參考上一格的內部特徵，原本就有的細節傾向留在原位，不會每格重新長一次，清晰度不變，生成時間只多幾個百分點。換 Source、生成解析度或 fit mode 時兩者都會重新開始。PyTorch 和 TensorRT Backend 都支援；`streamturbo bench --precision int8` 量測用的 INT8 UNet 沒有這個功能，報告會註明。
 
 生成解析度不必是正方形，例如 1024×576（16:9）。輸入比例不同時依 `fit_mode` 處理，輸出解析度可以再放大，例如 1920×1080。
 
@@ -240,6 +240,7 @@ Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看�
 | 平板顯示需要 access token | 用 `--lan` 啟動時印出的完整網址，包含 `?token=` |
 | Spout Out 顯示 Sender Name 已被使用 | 換一個名稱，或重新啟動 TouchDesigner 釋放殘留的名稱 |
 | Measure Latency 逾時，或 StreamTurbo 的輸入畫面停住不動 | 在同一個 TouchDesigner 工作階段裡刪掉或重建過 Spout Out 時，舊名稱會殘留一個凍結的發送端，新的會變成 `名稱_2`（`streamturbo run --list-sources` 看得到）。換一個 Sender Name 後重新選一次 Transport，或重新啟動 TouchDesigner |
+| 重新啟動 StreamTurbo 後，TouchDesigner 收到的畫面停住、Measure Latency 逾時 | TouchDesigner 的 Spout In 還連著上一次的 `StreamTurbo` 發送端。在元件上重新選一次 Transport |
 | 顯示找不到 NVIDIA 驅動程式 | 從 [NVIDIA 官網](https://www.nvidia.com/Download/index.aspx) 安裝 580 以上的驅動程式 |
 | uv 安裝失敗 | 確認網路連線，或手動安裝 [uv](https://docs.astral.sh/uv/) 後重新執行 |
 | `doctor` 顯示 NOT READY | 依照 PROBLEM 那幾行的說明處理 |

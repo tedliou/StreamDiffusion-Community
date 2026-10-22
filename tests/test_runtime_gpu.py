@@ -161,8 +161,12 @@ def test_tensorrt_output_matches_pytorch(pytorch, tensorrt, size):
     assert difference(glass_output(tensorrt, *size), glass_output(pytorch, *size)) < TENSORRT_TOLERANCE
 
 
+def pixels(frame: OutputFrame) -> torch.Tensor:
+    return frame.data.view(frame.height, frame.width, 4)[..., :3].float()
+
+
 def clip_outputs(backend, clip: list[torch.Tensor], **changes: object) -> list[torch.Tensor]:
-    """Glass Output Frames for a clip of 1024x768 Input Frames, pushed one at a time so none is dropped."""
+    """Glass Output Frames for a clip of Input Frames, pushed one at a time so none is dropped."""
     net = MemoryTransports()
     source = net.add_source("cam")
     settings = GLASS.merged(changes)
@@ -172,7 +176,7 @@ def clip_outputs(backend, clip: list[torch.Tensor], **changes: object) -> list[t
             source.push(input_frame(frame))
             sink.wait_for(lambda f, seq=seq: f.input_seq == seq, timeout=60)
     frames = {f.input_seq: f for f in sink.frames}
-    return [frames[seq].data.view(768, 1024, 4)[..., :3].float() for seq in range(len(clip))]
+    return [pixels(frames[seq]) for seq in range(len(clip))]
 
 
 def still_clip(count: int = 20) -> list[torch.Tensor]:
@@ -224,12 +228,23 @@ def sharpness(frames: list[torch.Tensor]) -> float:
     return sum(torch.nn.functional.conv2d(g, LAPLACE).abs().mean().item() for g in grey) / len(grey)
 
 
-def test_temporal_coherence_keeps_detail_in_place_without_softening_it(pytorch):
+def test_temporal_coherence_keeps_detail_in_place_without_softening_it(backend):
     assert Settings().temporal_coherence
     for clip, step, limit in ((still_clip(), 0, COHERENCE_STILL), (pan_clip(), 8, COHERENCE_PAN)):
-        off, on = clip_outputs(pytorch, clip), clip_outputs(pytorch, clip, temporal_coherence=True)
+        off, on = clip_outputs(backend, clip), clip_outputs(backend, clip, temporal_coherence=True)
         assert warp_error(on, step) < limit * warp_error(off, step)
         assert sharpness(on) > SHARPNESS_KEPT * sharpness(off)
+
+
+@pytest.mark.parametrize("size", [(1024, 768), (512, 768)])
+def test_tensorrt_matches_pytorch_with_temporal_coherence(pytorch, tensorrt, size):
+    """Every frame after the first leans on the one before, so the Engine's feature inputs and outputs are used."""
+    width, height = size
+    frames = [torch.roll(synthetic_frame(width, height), shifts=8 * i, dims=1) for i in range(4)]
+    on = {"temporal_coherence": True, "generation": {"width": width, "height": height}}
+    on |= {"output": {"width": width, "height": height}}
+    ours, reference = clip_outputs(tensorrt, frames, **on), clip_outputs(pytorch, frames, **on)
+    assert all(difference(a, b) < TENSORRT_TOLERANCE for a, b in zip(ours, reference, strict=True))
 
 
 def test_a_wide_generation_resolution_fits_and_upscales(backend):
