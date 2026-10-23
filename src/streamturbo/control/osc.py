@@ -37,6 +37,9 @@ STATUS_FIELDS = (
     "backend",
     "engines.state",
     "engines.progress",
+    "engines.paused",
+    "generation_width",  # the Generation Resolution in effect, below the Settings' in Low-VRAM Mode
+    "generation_height",
 )
 
 
@@ -113,7 +116,9 @@ class OscServer:
                 for field in STATUS_FIELDS:
                     value = functools.reduce(lambda node, key: node[key], field.split("."), status)
                     address = f"{PREFIX}status/{field.replace('.', '/')}"
-                    self._client.send_message(address, "" if value is None else value)
+                    if value is None:
+                        value = ""
+                    self._client.send_message(address, int(value) if isinstance(value, bool) else value)
             except Exception:  # an unreachable reply host or a failed sample; keep reporting
                 log.exception("could not send the status over OSC")
 

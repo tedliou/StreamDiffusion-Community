@@ -43,6 +43,8 @@ export interface Status {
     detail: string | null;
     paused: boolean;
   };
+  generation_width: number;
+  generation_height: number;
   vram_used_gib: number | null;
   vram_total_gib: number | null;
   power_w: number | null;

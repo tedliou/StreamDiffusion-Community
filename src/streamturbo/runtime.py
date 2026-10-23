@@ -21,6 +21,7 @@ from streamturbo.backends import Backend, BestBackend, EngineStatus
 from streamturbo.frames import InputFrame, OutputFrame, PixelFormat, host_buffer
 from streamturbo.generation import GenerationCore, Glide
 from streamturbo.mailbox import Mailbox
+from streamturbo.model_spec import SD_TURBO, ModelSpec
 from streamturbo.settings import Settings, SimilarFrameSkip
 from streamturbo.transports import Sink, Source, Transports
 
@@ -74,6 +75,8 @@ class RuntimeStatus:
     generation_ms_p95: float
     backend: str  # the Backend generating now
     engines: EngineStatus  # TensorRT Engine build progress; "off" for a Backend that builds none
+    generation_width: int  # the Generation Resolution in effect: below the Settings' when the Model Spec is capped
+    generation_height: int
 
 
 @dataclass(frozen=True)
@@ -121,7 +124,9 @@ class Runtime:
         *,
         source_timeout: float = 1.0,
         reconnect_delay: float = 1.0,
+        spec: ModelSpec = SD_TURBO,
     ) -> None:
+        """`spec` is the Model Spec the Backend generates with; Low-VRAM Mode caps its Generation Resolutions."""
         self._settings = settings  # applied: what Output Frames are generated with
         self._settings_version = 0
         self._pending: tuple[Settings, int] | None = None  # submitted, applied between two Output Frames
@@ -144,6 +149,7 @@ class Runtime:
         self._sent_at: deque[float] = deque(maxlen=METRICS_WINDOW)
         self._source_timeout = source_timeout
         self._reconnect_delay = reconnect_delay
+        self._spec = spec
 
     def start(self) -> None:
         self._core.set_prompts(_blend(self._settings))
@@ -217,6 +223,7 @@ class Runtime:
 
     def status(self) -> RuntimeStatus:
         with self._lock:
+            width, height = self._generation_size(self._settings)
             return RuntimeStatus(
                 source_state=self._source_state,
                 error=self._error,
@@ -232,6 +239,8 @@ class Runtime:
                 engines=self._backend.engine_status()
                 if isinstance(self._backend, BestBackend)
                 else EngineStatus("off"),
+                generation_width=width,
+                generation_height=height,
             )
 
     def _record_error(self, error: Exception) -> None:
@@ -370,19 +379,23 @@ class Runtime:
     def _prepare(self, frame: InputFrame, stream: torch.cuda.Stream | None = None) -> torch.Tensor:
         """Upload an Input Frame and map it onto the Generation Resolution: (1, 3, H, W) in [-1, 1]."""
         settings, device = self._settings, self._backend.device
-        gen = settings.generation
+        width, height = self._generation_size(settings)
         with torch.cuda.stream(stream):
             raw = frame.data.to(device, non_blocking=True)
             rgb = imageops.to_rgb(raw, frame.width, frame.height, frame.row_bytes, frame.format)
-            return imageops.fit(rgb, gen.width, gen.height, settings.fit_mode) * 2 - 1
+            return imageops.fit(rgb, width, height, settings.fit_mode) * 2 - 1
+
+    def _generation_size(self, settings: Settings) -> tuple[int, int]:
+        """The Generation Resolution in effect: the requested one, reduced to what the Model Spec accepts."""
+        return self._spec.fit(settings.generation.width, settings.generation.height)
 
     def _generate(self, seq: int, image: torch.Tensor | None) -> _Generated:
         settings, device = self._settings, self._backend.device
-        gen = settings.generation
+        width, height = self._generation_size(settings)
         timing = _Timing(device)
         strength = self._strength.value()
         result = self._core.generate(
-            image, strength, gen.width, gen.height, settings.temporal_smoothing, settings.temporal_coherence
+            image, strength, width, height, settings.temporal_smoothing, settings.temporal_coherence
         )
         out, fmt = settings.output, self._sink_format
         if settings.upscaling:

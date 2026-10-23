@@ -285,6 +285,9 @@ def test_osc_reports_errors_and_status(rig: Rig):
     assert rig.osc_in.wait_for("/streamturbo/status/source_state") in (("live",), ("waiting",))
     assert rig.osc_in.wait_for("/streamturbo/status/backend") == ("fake",)
     assert rig.osc_in.wait_for("/streamturbo/status/engines/state") == ("off",)
+    assert rig.osc_in.wait_for("/streamturbo/status/engines/paused") == (0,)
+    generation = rig.runtime.settings()[0].generation
+    assert rig.osc_in.wait_for("/streamturbo/status/generation_width") == (generation.width,)
 
 
 def test_status_and_preview_frames_are_pushed(rig: Rig):

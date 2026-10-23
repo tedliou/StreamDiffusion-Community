@@ -3,7 +3,7 @@ import { Presets } from "./components/Presets";
 import { Previews } from "./components/Previews";
 import { SettingControl } from "./components/SettingControl";
 import { StatusBar } from "./components/StatusBar";
-import { type Field, type Runtime, type Settings, useRuntime, valueAt } from "./runtime";
+import { type Field, type Runtime, type Settings, type Status, useRuntime, valueAt } from "./runtime";
 import { groupText, text } from "./strings";
 
 const GROUPS: { key: keyof typeof groupText; paths: string[] }[] = [
@@ -83,6 +83,7 @@ export function App() {
                 {(key === "source" || key === "sink") && valueAt(settings, `${key}.transport`) === "ndi" && (
                   <NdiNotice />
                 )}
+                {key === "resolution" && status && <ReducedResolution settings={settings} status={status} />}
               </fieldset>
             ))}
         </section>
@@ -136,6 +137,14 @@ function SourcePicker({ runtime, transport }: { runtime: Runtime; transport: str
         ))}
     </div>
   );
+}
+
+/** Low-VRAM Mode generates below the requested Generation Resolution: say what is in effect. */
+function ReducedResolution({ settings, status }: { settings: Settings; status: Status }) {
+  const width = valueAt(settings, "generation.width");
+  const height = valueAt(settings, "generation.height");
+  if (status.generation_width === width && status.generation_height === height) return null;
+  return <p className="help">{text.reducedResolution(status.generation_width, status.generation_height)}</p>;
 }
 
 function NdiNotice() {
