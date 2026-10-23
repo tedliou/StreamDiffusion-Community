@@ -1,0 +1,12 @@
+# Keeps the CI workflow's actions current. Python packages stay pinned in uv.lock and are bumped by hand,
+# because torch, TensorRT and the CUDA runtime are pinned together and TensorRT 11 is held back (ADR-0005).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: [dependencies]
+    groups:
+      actions:
+        patterns: ["*"]

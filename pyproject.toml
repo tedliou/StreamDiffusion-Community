@@ -1,6 +1,6 @@
 [project]
 name = "streamturbo"
-version = "0.1.0"
+version = "1.0.0"
 description = "Real-time sd-turbo Generation between NDI/Spout and TouchDesigner on Windows"
 readme = "README.md"
 requires-python = "==3.12.*"
