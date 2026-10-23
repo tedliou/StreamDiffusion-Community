@@ -1,6 +1,8 @@
 """PyTorch Backend: eager fp16 on CUDA with SDPA attention."""
 
+import contextlib
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -171,6 +173,17 @@ class PyTorchBackend:
         """Free the UNet's VRAM while another Backend generates; the text encoder and tiny VAE stay loaded."""
         self._unet = None
         torch.cuda.empty_cache()
+
+    @contextlib.contextmanager
+    def lend_gpu(self) -> Iterator[None]:
+        """Free all the VRAM this Backend can spare for the duration, e.g. while an exclusive Engine build runs:
+        the UNet is released (reloaded on its next use) and the text encoder waits in host memory."""
+        self._text_encoder.to("cpu")  # pyright: ignore[reportArgumentType]
+        self.release()
+        try:
+            yield
+        finally:
+            self._text_encoder.to(self.device)  # pyright: ignore[reportArgumentType]
 
     @torch.inference_mode()
     def encode_prompt(self, prompt: str) -> torch.Tensor:

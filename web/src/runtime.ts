@@ -37,7 +37,12 @@ export interface Status {
   generation_ms_p95: number;
   frames_skipped: number;
   backend: string;
-  engines: { state: "off" | "building" | "ready" | "failed"; progress: number; detail: string | null };
+  engines: {
+    state: "off" | "building" | "ready" | "failed";
+    progress: number;
+    detail: string | null;
+    paused: boolean;
+  };
   vram_used_gib: number | null;
   vram_total_gib: number | null;
   power_w: number | null;

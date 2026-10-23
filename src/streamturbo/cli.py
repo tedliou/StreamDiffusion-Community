@@ -28,6 +28,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--no-browser", action="store_true", help="do not open the Web Panel in the browser")
     build = commands.add_parser("build-engines", help="build the TensorRT Engines now, e.g. before a show")
     build.add_argument("--precision", choices=("fp16", "int8"), default="fp16", help="UNet precision (default fp16)")
+    for command in (run, build):
+        command.add_argument(
+            "--low-vram",
+            action=argparse.BooleanOptionalAction,
+            help="force Low-VRAM Mode on or off: Engines build with the GPU to themselves, pausing output "
+            "(default: on below 6 GB of VRAM)",
+        )
     bench = commands.add_parser("bench", help="measure the Glass workload and write a JSON report")
     bench.add_argument("--settings", type=Path, help="a Settings TOML file")
     bench.add_argument("--frames", type=int, default=120, help="frames to measure after warm-up")
@@ -48,7 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         return _list_sources() if args.list_sources else _run(args)
     if args.command == "build-engines":
-        return _build_engines(args.precision)
+        return _build_engines(args.precision, args.low_vram)
     from streamturbo import bench as bench_module
 
     if args.matrix:
@@ -83,7 +90,7 @@ def _run(args: argparse.Namespace) -> int:
     import webbrowser
 
     from streamturbo import weights
-    from streamturbo.backends import BestBackend
+    from streamturbo.backends import BestBackend, low_vram_mode
     from streamturbo.backends.pytorch import PyTorchBackend
     from streamturbo.backends.tensorrt import builder
     from streamturbo.control import Control
@@ -98,9 +105,11 @@ def _run(args: argparse.Namespace) -> int:
     store, transports = PresetStore(presets_dir()), SystemTransports()
     settings = initial_settings(store, last_settings_path(), args.settings, args.preset)
     reply_host, _, reply_port = args.osc_reply.rpartition(":")
-    print("Loading sd-turbo ...")
+    low_vram = low_vram_mode(args.low_vram)
+    print("Loading sd-turbo ..." + (" (Low-VRAM Mode)" if low_vram else ""))
     pytorch = PyTorchBackend(*weights.fetch_all(SD_TURBO))
-    backend = BestBackend(pytorch, builder(pytorch, SD_TURBO, engines_dir()))
+    engines = builder(pytorch, SD_TURBO, engines_dir(), exclusive=low_vram)
+    backend = BestBackend(pytorch, engines, exclusive=low_vram)
     runtime = Runtime(settings, backend, transports)
     control = Control(runtime, store, transports, last_settings_path())
     token = _access_token(project_home() / "access-token") if args.lan else None
@@ -137,14 +146,16 @@ def _status_line(status) -> str:
         f"dropped {status.dropped_frames} | {status.backend}"
     )
     if status.engines.state == "building":
-        line += f" (building Engines {status.engines.progress:.0%})"
+        paused = ", output paused" if status.engines.paused else ""
+        line += f" (building Engines {status.engines.progress:.0%}{paused})"
     elif status.engines.state == "failed":
         line += f" | Engines failed: {status.engines.detail}"
     return f"{line} | {status.error}" if status.error else line
 
 
-def _build_engines(precision: str) -> int:
+def _build_engines(precision: str, forced_low_vram: bool | None) -> int:
     from streamturbo import weights
+    from streamturbo.backends import low_vram_mode
     from streamturbo.backends.pytorch import PyTorchBackend
     from streamturbo.backends.tensorrt import build_engines, missing_engines
     from streamturbo.model_spec import SD_TURBO
@@ -160,7 +171,14 @@ def _build_engines(precision: str) -> int:
     def progress(component: str, fraction: float) -> None:
         print(f"  {component or 'done':<12} {fraction:4.0%}".ljust(40), end="\r", flush=True)
 
-    paths = build_engines(pytorch, SD_TURBO, engines_dir(), precision, progress)  # pyright: ignore[reportArgumentType]
+    paths = build_engines(
+        pytorch,
+        SD_TURBO,
+        engines_dir(),
+        precision,  # pyright: ignore[reportArgumentType]
+        progress,
+        exclusive=low_vram_mode(forced_low_vram),
+    )
     print()
     for component, path in paths.items():
         print(f"{component:<12} {path}")

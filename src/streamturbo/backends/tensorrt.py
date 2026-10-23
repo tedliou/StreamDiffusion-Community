@@ -33,9 +33,14 @@ TEXT_TOKENS, TEXT_DIM = 77, 1024  # sd-turbo's OpenCLIP text encoder
 EXPORT_VERSION = 1  # bumped whenever the exported graph changes, so older cached Engines are rebuilt
 COHERENT_EXPORT_VERSION = 2  # the FP16 UNet's: 2 takes and returns Temporal Coherence features
 UPSCALER_EXPORT_VERSION = 1  # the Upscaler's own, so changing it never rebuilds the sd-turbo Engines
-# Tactic scratch while building. FP16 is built while the Runtime runs, and 2 GiB keeps that under 8 GB of VRAM;
-# the INT8 UNet is a bench option built on its own.
+# Tactic scratch while building, at most. FP16 is built while the Runtime runs, and 2 GiB keeps that under 8 GB of
+# VRAM; the INT8 UNet is a bench option built on its own.
 WORKSPACE_BYTES: dict[Precision, int] = {"fp16": 2 << 30, "int8": 3 << 30}
+# Besides the workspace, a build holds the network's weights on the GPU, plus TensorRT's own buffers and the
+# activations it times tactics with: the workspace gets what this reserve leaves of the free VRAM, down to a floor
+# below which the build is not worth attempting.
+BUILD_RESERVE_BYTES = 512 << 20
+MIN_WORKSPACE_BYTES = 256 << 20
 # The INT8 UNet's profile, as (min, max) Generation Resolutions in pixels: the bench matrix's 4:3 options. Its
 # attention is not fused, and over the full 256-1024 range the build needs more than 3 GiB of workspace.
 INT8_RESOLUTIONS = ((768, 576), (1024, 768))
@@ -303,7 +308,7 @@ def build_engine(
         errors = "; ".join(str(parser.get_error(i)) for i in range(parser.num_errors))
         raise RuntimeError(f"could not parse {onnx_path.name}: {errors}")
     config = builder.create_builder_config()
-    config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, WORKSPACE_BYTES[precision])
+    config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, _workspace_bytes(onnx_path, component, precision))
     if progress is not None:
         config.progress_monitor = progress
     profile = builder.create_optimization_profile()
@@ -318,6 +323,19 @@ def build_engine(
     partial = engine_path.with_suffix(".partial")
     partial.write_bytes(memoryview(serialized))
     partial.replace(engine_path)  # a crash mid-write never leaves a broken Engine in the cache
+
+
+def _workspace_bytes(onnx_path: Path, component: Component, precision: Precision) -> int:
+    """The workspace for one build, from the VRAM free just before it: other programs may hold some."""
+    weights = sum(f.stat().st_size for f in onnx_path.parent.iterdir() if f.is_file())  # the ONNX and its data
+    free, _ = torch.cuda.mem_get_info()
+    workspace = min(WORKSPACE_BYTES[precision], free - weights - BUILD_RESERVE_BYTES)
+    if workspace < MIN_WORKSPACE_BYTES:
+        raise RuntimeError(
+            f"not enough free VRAM to build the {component} Engine: {free >> 20} MiB free, "
+            f"{(weights + BUILD_RESERVE_BYTES + MIN_WORKSPACE_BYTES) >> 20} MiB needed"
+        )
+    return workspace
 
 
 def _progress_monitor(component: Component, done: int, total: int, report: Progress, cancel: threading.Event):
@@ -367,8 +385,13 @@ def build_engines(
     precision: Precision = "fp16",
     progress: Progress | None = None,
     cancel: threading.Event | None = None,
+    exclusive: bool = False,
 ) -> dict[Component, Path]:
-    """Export and build every missing Engine; returns the Engine paths. Existing Engines are reused."""
+    """Export and build every missing Engine; returns the Engine paths. Existing Engines are reused.
+
+    `exclusive` (Low-VRAM Mode) gives each TensorRT build the GPU to itself: the PyTorch Backend lends its VRAM
+    after the ONNX export, which still needs it, so nothing may generate on it meanwhile.
+    """
     cancel = cancel or threading.Event()
     paths = engine_paths(engines_dir, spec, precision)
     todo: list[Component] = [c for c, path in paths.items() if not path.is_file()]
@@ -385,16 +408,17 @@ def build_engines(
                 export_onnx(backend, component, spec, work / "model.onnx")
             torch.cuda.empty_cache()
             monitor = _progress_monitor(component, done, len(todo), report, cancel)
-            build_engine(
-                work / "model.onnx",
-                paths[component],
-                component,
-                spec,
-                backend.latent_scale,
-                monitor,
-                component_precision(component, precision),
-                _coherent_layers(backend, component, precision),
-            )
+            with backend.lend_gpu() if exclusive else contextlib.nullcontext():
+                build_engine(
+                    work / "model.onnx",
+                    paths[component],
+                    component,
+                    spec,
+                    backend.latent_scale,
+                    monitor,
+                    component_precision(component, precision),
+                    _coherent_layers(backend, component, precision),
+                )
         finally:
             shutil.rmtree(work, ignore_errors=True)
         if cancel.is_set():
@@ -508,12 +532,18 @@ def _torch_dtype(dtype) -> torch.dtype:
     }[dtype]
 
 
-def builder(pytorch: PyTorchBackend, spec: ModelSpec, engines_dir: Path, precision: Precision = "fp16"):
-    """The background build for BestBackend: reuse or build the Engines, then load them."""
+def builder(
+    pytorch: PyTorchBackend, spec: ModelSpec, engines_dir: Path, precision: Precision = "fp16", exclusive: bool = False
+):
+    """The background build for BestBackend: reuse or build the Engines, then load them. `exclusive` also loads
+    them with the PyTorch UNet released, as BestBackend would on switching."""
 
     def build(report: ProgressReport) -> "TensorRTBackend":
-        paths = build_engines(pytorch, spec, engines_dir, precision, lambda part, fraction: report(fraction, part))
-        return TensorRTBackend(pytorch, paths)
+        paths = build_engines(
+            pytorch, spec, engines_dir, precision, lambda part, fraction: report(fraction, part), exclusive=exclusive
+        )
+        with pytorch.lend_gpu() if exclusive else contextlib.nullcontext():
+            return TensorRTBackend(pytorch, paths)
 
     return build
 

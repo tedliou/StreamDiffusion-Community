@@ -8,7 +8,7 @@ import pytest
 from streamturbo.cli import main
 
 
-def fake_nvml(driver: str = "621.01", compute: tuple[int, int] = (8, 6), vram_gib: int = 8) -> SimpleNamespace:
+def fake_nvml(driver: str = "621.01", compute: tuple[int, int] = (8, 6), vram_gib: float = 8) -> SimpleNamespace:
     """Stand-in for the NVIDIA driver's NVML library, so GPU cases run on CPU-only CI."""
     return SimpleNamespace(
         nvmlInit=lambda: None,
@@ -18,7 +18,7 @@ def fake_nvml(driver: str = "621.01", compute: tuple[int, int] = (8, 6), vram_gi
         nvmlDeviceGetHandleByIndex=lambda index: index,
         nvmlDeviceGetName=lambda handle: "NVIDIA GeForce RTX 3070",
         nvmlDeviceGetCudaComputeCapability=lambda handle: compute,
-        nvmlDeviceGetMemoryInfo=lambda handle: SimpleNamespace(total=vram_gib * 1024**3),
+        nvmlDeviceGetMemoryInfo=lambda handle: SimpleNamespace(total=int(vram_gib * 1024**3)),
         nvmlDeviceGetEnforcedPowerLimit=lambda handle: 162_000,
         nvmlDeviceGetPowerManagementDefaultLimit=lambda handle: 270_000,
     )
@@ -80,12 +80,31 @@ def test_doctor_fails_on_pre_turing_gpu(capsys, monkeypatch):
     assert "PROBLEM: No NVIDIA GPU of the Turing generation" in out
 
 
-def test_doctor_warns_below_8_gb_vram(capsys, monkeypatch):
+def test_doctor_suggests_low_vram_mode_below_8_gb_vram(capsys, monkeypatch):
     monkeypatch.setitem(sys.modules, "pynvml", fake_nvml(vram_gib=6))
 
     _, out = run_doctor(capsys)
 
-    assert "WARNING: NVIDIA GeForce RTX 3070 has less than 8 GB of VRAM." in out
+    assert "WARNING: NVIDIA GeForce RTX 3070 has 6 GB of VRAM" in out
+    assert "--low-vram" in out
+
+
+def test_doctor_reports_low_vram_mode_below_6_gb_vram(capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "pynvml", fake_nvml(vram_gib=3.99))  # a 4 GB card reports a little less
+
+    _, out = run_doctor(capsys)
+
+    assert "WARNING: NVIDIA GeForce RTX 3070 has 4 GB of VRAM: the Runtime runs in Low-VRAM Mode" in out
+    assert "needs at least" not in out
+
+
+def test_doctor_fails_below_4_gb_vram(capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "pynvml", fake_nvml(vram_gib=2))
+
+    code, out = run_doctor(capsys)
+
+    assert code == 1
+    assert "PROBLEM: NVIDIA GeForce RTX 3070 has 2 GB of VRAM; StreamTurbo needs at least 4 GB." in out
 
 
 def test_version_flag(capsys):
