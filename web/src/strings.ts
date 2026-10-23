@@ -120,6 +120,8 @@ export const text = {
     resume: "Resume Previews",
     empty: "No frame yet",
   },
+  reducedResolution: (width: number, height: number) =>
+    `Generating at ${width} × ${height}: Low-VRAM Mode caps the Generation Resolution, and the Upscaler reaches the Output Resolution.`,
   refreshSources: "Refresh",
   refreshingSources: "Refreshing…",
   noSources: "No senders visible",

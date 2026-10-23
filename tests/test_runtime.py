@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from streamturbo.frames import PixelFormat
+from streamturbo.model_spec import SD_TURBO
 from streamturbo.runtime import IN_FLIGHT, Runtime
 from streamturbo.transports.memory import MemoryTransports, input_frame
 from tests.conftest import FakeBackend
@@ -46,6 +47,36 @@ def test_input_frame_becomes_output_frame_at_output_resolution(small_settings, n
 
     assert (out.width, out.height, out.format) == (320, 240, PixelFormat.RGBA)
     assert out.data.numel() == 320 * 240 * 4
+
+
+@pytest.mark.parametrize(
+    ("requested", "in_effect"),
+    [((1024, 768), (512, 384)), ((1024, 576), (512, 320)), ((448, 320), (448, 320))],
+)
+def test_a_capped_model_spec_reduces_the_generation_resolution(small_settings, net, requested, in_effect):
+    backend = FakeBackend()
+    settings = small_settings.merged({"generation": {"width": requested[0], "height": requested[1]}})
+    source, sink = net.add_source("cam"), net.sink(small_settings.sink)
+    with Runtime(settings, backend, net, spec=SD_TURBO.capped(512)) as runtime:
+        source.push(input_frame(solid(640, 480, RED)))
+        out = sink.wait_for(lambda f: f.input_seq == 0)
+        status = runtime.status()
+
+    assert (status.generation_width, status.generation_height) == in_effect
+    assert backend.latent_shape[-2:] == (in_effect[1] // 8, in_effect[0] // 8)
+    assert (out.width, out.height) == (320, 240)
+    assert runtime.settings()[0].generation.width == requested[0]  # the Settings keep the requested size
+
+
+def test_without_a_cap_the_generation_resolution_is_the_requested_one(small_settings, net):
+    settings = small_settings.merged({"generation": {"width": 1024, "height": 768}})
+    source, sink = net.add_source("cam"), net.sink(small_settings.sink)
+    with Runtime(settings, FakeBackend(), net) as runtime:
+        source.push(input_frame(solid(640, 480, RED)))
+        sink.wait_for(lambda f: f.input_seq == 0)
+        status = runtime.status()
+
+    assert (status.generation_width, status.generation_height) == (1024, 768)
 
 
 def test_slow_backend_drops_stale_frames_but_never_the_latest(small_settings, net):

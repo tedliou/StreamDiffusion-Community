@@ -1,6 +1,9 @@
 """Model Spec: which weights a model needs, at which revision, and what it supports."""
 
+import dataclasses
 from dataclasses import dataclass
+
+LOW_VRAM_MAX_SIDE = 512  # Low-VRAM Mode's largest Generation Resolution side, and its Engines' profile (#26)
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,23 @@ class ModelSpec:
     max_side: int = 1024
     side_step: int = 64
 
+    def capped(self, max_side: int) -> "ModelSpec":
+        """The same model accepting Generation Resolutions up to `max_side` per side: smaller Engines."""
+        return dataclasses.replace(self, max_side=min(self.max_side, max_side))
+
+    def fit(self, width: int, height: int) -> tuple[int, int]:
+        """The Generation Resolution this spec generates a requested one at: unchanged when it fits, otherwise
+        scaled down to the largest side, keeping the aspect ratio as closely as `side_step` multiples allow."""
+        if max(width, height) <= self.max_side:
+            return width, height
+        scale = self.max_side / max(width, height)
+
+        def side(length: int) -> int:
+            steps = int(length * scale / self.side_step + 0.5)
+            return min(self.max_side, max(self.min_side, steps * self.side_step))
+
+        return side(width), side(height)
+
 
 SD_TURBO = ModelSpec(
     name="sd-turbo",
@@ -50,6 +70,12 @@ SD_TURBO = ModelSpec(
         files=("config.json", "diffusion_pytorch_model.safetensors"),
     ),
 )
+
+
+def sd_turbo(low_vram: bool) -> ModelSpec:
+    """sd-turbo as this machine runs it: in Low-VRAM Mode, with Generation Resolutions and Engines capped."""
+    return SD_TURBO.capped(LOW_VRAM_MAX_SIDE) if low_vram else SD_TURBO
+
 
 # The Upscaler: Real-ESRGAN realesr-animevideov3, BSD-3-Clause (spec #19).
 UPSCALER = PinnedFile(

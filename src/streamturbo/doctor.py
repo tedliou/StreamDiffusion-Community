@@ -141,11 +141,12 @@ def _collect_engines(report: Report) -> None:
     if not report.cuda_available:
         return
     try:
+        from streamturbo.backends import low_vram_mode
         from streamturbo.backends.tensorrt import COMPONENTS, missing_engines
-        from streamturbo.model_spec import SD_TURBO
+        from streamturbo.model_spec import sd_turbo
         from streamturbo.paths import engines_dir
 
-        missing = missing_engines(engines_dir(), SD_TURBO)
+        missing = missing_engines(engines_dir(), sd_turbo(low_vram_mode()))  # the Engines `run` would use
     except Exception as exc:
         report.warnings.append(f"TensorRT cannot be loaded ({exc}): the slower PyTorch Backend will be used.")
         return

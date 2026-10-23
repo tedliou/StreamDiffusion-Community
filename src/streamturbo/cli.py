@@ -96,7 +96,7 @@ def _run(args: argparse.Namespace) -> int:
     from streamturbo.control import Control
     from streamturbo.control.osc import OscServer
     from streamturbo.control.web import WebServer
-    from streamturbo.model_spec import SD_TURBO
+    from streamturbo.model_spec import LOW_VRAM_MAX_SIDE, SD_TURBO, sd_turbo
     from streamturbo.paths import engines_dir, last_settings_path, presets_dir, project_home
     from streamturbo.presets import PresetStore, initial_settings
     from streamturbo.runtime import Runtime
@@ -106,11 +106,14 @@ def _run(args: argparse.Namespace) -> int:
     settings = initial_settings(store, last_settings_path(), args.settings, args.preset)
     reply_host, _, reply_port = args.osc_reply.rpartition(":")
     low_vram = low_vram_mode(args.low_vram)
-    print("Loading sd-turbo ..." + (" (Low-VRAM Mode)" if low_vram else ""))
+    spec = sd_turbo(low_vram)
+    if low_vram:
+        print(f"Low-VRAM Mode: Generation Resolution up to {LOW_VRAM_MAX_SIDE} px per side")
+    print("Loading sd-turbo ...")
     pytorch = PyTorchBackend(*weights.fetch_all(SD_TURBO))
-    engines = builder(pytorch, SD_TURBO, engines_dir(), exclusive=low_vram)
+    engines = builder(pytorch, spec, engines_dir(), exclusive=low_vram)
     backend = BestBackend(pytorch, engines, exclusive=low_vram)
-    runtime = Runtime(settings, backend, transports)
+    runtime = Runtime(settings, backend, transports, spec=spec)
     control = Control(runtime, store, transports, last_settings_path())
     token = _access_token(project_home() / "access-token") if args.lan else None
     web = WebServer(control, "0.0.0.0" if args.lan else "127.0.0.1", args.port, token)
@@ -158,10 +161,12 @@ def _build_engines(precision: str, forced_low_vram: bool | None) -> int:
     from streamturbo.backends import low_vram_mode
     from streamturbo.backends.pytorch import PyTorchBackend
     from streamturbo.backends.tensorrt import build_engines, missing_engines
-    from streamturbo.model_spec import SD_TURBO
+    from streamturbo.model_spec import SD_TURBO, sd_turbo
     from streamturbo.paths import engines_dir
 
-    todo = missing_engines(engines_dir(), SD_TURBO, precision)  # pyright: ignore[reportArgumentType]
+    low_vram = low_vram_mode(forced_low_vram)
+    spec = sd_turbo(low_vram)
+    todo = missing_engines(engines_dir(), spec, precision)  # pyright: ignore[reportArgumentType]
     if not todo:
         print(f"All {precision} Engines are already built in {engines_dir()}")
         return 0
@@ -173,11 +178,11 @@ def _build_engines(precision: str, forced_low_vram: bool | None) -> int:
 
     paths = build_engines(
         pytorch,
-        SD_TURBO,
+        spec,
         engines_dir(),
         precision,  # pyright: ignore[reportArgumentType]
         progress,
-        exclusive=low_vram_mode(forced_low_vram),
+        exclusive=low_vram,
     )
     print()
     for component, path in paths.items():
