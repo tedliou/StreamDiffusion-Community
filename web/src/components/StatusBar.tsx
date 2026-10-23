@@ -45,6 +45,7 @@ export function StatusBar({ status, applying }: { status: Status | null; applyin
       </dl>
       <p className="status-line" role="status" aria-live="polite">
         {applying && <span className="applying">{text.metrics.applying}</span>}
+        {status?.engines.paused && <span className="paused">{text.metrics.paused}</span>}
         {status?.error && <span className="status-error">{status.error}</span>}
         {status?.engines.state === "failed" && (
           <span className="status-error">

@@ -15,9 +15,9 @@ class FakeBackend:
     by Strength, pushed through an 8x down/up-sample. A Prompt's embedding is filled with its `shades` entry
     (0 when absent) and the UNet brightens the image by that much, so tests can see which Prompt, or which
     mix of Prompts, generated a frame. Its Upscaler enlarges 4x and brightens by a quarter of the range, so
-    tests can see which Output Frames it made. `unet_delay` simulates a slow GPU and
-    `failures` makes that many UNet calls raise. A `negative` Backend inverts its Output Frames, so tests can
-    tell which Backend generated a frame.
+    tests can see which Output Frames it made. `unet_delay` simulates a slow GPU,
+    `failures` makes that many UNet calls raise and `unet_calls` counts them. A `negative` Backend inverts its
+    Output Frames, so tests can tell which Backend generated a frame.
     """
 
     latent_channels = 4
@@ -32,6 +32,7 @@ class FakeBackend:
         self.alphas_cumprod = torch.cumprod(1 - betas, 0)
         self.unet_delay = unet_delay
         self.failures = 0
+        self.unet_calls = 0
         self.prompts: list[str] = []
         self.shades: dict[str, float] = {}
 
@@ -51,6 +52,7 @@ class FakeBackend:
         return (F.interpolate(image, scale_factor=4, mode="nearest") + 0.5).clamp(-1, 1)
 
     def unet(self, latents: torch.Tensor, timestep: torch.Tensor, prompt_embeds: torch.Tensor) -> torch.Tensor:
+        self.unet_calls += 1
         if self.unet_delay:
             time.sleep(self.unet_delay)
         if self.failures:

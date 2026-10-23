@@ -11,7 +11,13 @@ from types import ModuleType
 MIN_DRIVER_MAJOR = 580  # CUDA 13 (ADR-0001)
 DRIVER_URL = "https://www.nvidia.com/Download/index.aspx"
 MIN_COMPUTE_CAPABILITY = (7, 5)  # Turing
-MIN_VRAM_GIB = 8
+# VRAM tiers in nominal GB (ADR-0001): below LOW_VRAM_GB the Runtime runs in Low-VRAM Mode.
+MIN_VRAM_GB, LOW_VRAM_GB, FULL_VRAM_GB = 4, 6, 8
+
+
+def nominal_gb(vram_bytes: int) -> int:
+    """VRAM as sold: a 4 GB card reports a little under 4 GiB."""
+    return round(vram_bytes / 1024**3)
 
 
 @dataclass(frozen=True)
@@ -90,8 +96,20 @@ def _collect_gpus(report: Report) -> None:
     supported = [gpu for gpu in report.gpus if gpu.compute_capability >= MIN_COMPUTE_CAPABILITY]
     if not supported:
         report.problems.append("No NVIDIA GPU of the Turing generation (RTX 20) or newer was found.")
-    elif supported[0].vram_bytes < MIN_VRAM_GIB * 1024**3:
-        report.warnings.append(f"{supported[0].name} has less than {MIN_VRAM_GIB} GB of VRAM.")
+        return
+    gpu, gb = supported[0], nominal_gb(supported[0].vram_bytes)
+    if gb < MIN_VRAM_GB:
+        report.problems.append(f"{gpu.name} has {gb} GB of VRAM; StreamTurbo needs at least {MIN_VRAM_GB} GB.")
+    elif gb < LOW_VRAM_GB:
+        report.warnings.append(
+            f"{gpu.name} has {gb} GB of VRAM: the Runtime runs in Low-VRAM Mode (automatic below {LOW_VRAM_GB} GB), "
+            "pausing output while TensorRT Engines build."
+        )
+    elif gb < FULL_VRAM_GB:
+        report.warnings.append(
+            f"{gpu.name} has {gb} GB of VRAM: if TensorRT Engines fail to build, run with --low-vram "
+            f"(automatic below {LOW_VRAM_GB} GB)."
+        )
 
 
 def _watts(query: Callable[[object], int], handle: object) -> float | None:

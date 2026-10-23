@@ -146,10 +146,10 @@ class Runtime:
         self._reconnect_delay = reconnect_delay
 
     def start(self) -> None:
-        self._choose_backend()
         self._core.set_prompts(_blend(self._settings))
         self._core.set_seed(self._settings.seed)
-        self._warm_up()
+        self._warm_up()  # on the fallback, before an exclusive Engine build can take the GPU
+        self._choose_backend()
         for loop in (self._receive_loop, self._generate_loop, self._send_loop):
             thread = threading.Thread(target=loop, name=f"streamturbo-{loop.__name__.strip('_')}", daemon=True)
             thread.start()
@@ -211,6 +211,9 @@ class Runtime:
         """Between two Generations: adopt freshly built Engines, or follow a forced Backend."""
         if isinstance(self._backend, BestBackend):
             self._backend.choose(self._settings.backend)
+
+    def _paused(self) -> bool:
+        return isinstance(self._backend, BestBackend) and self._backend.engine_status().paused
 
     def status(self) -> RuntimeStatus:
         with self._lock:
@@ -314,6 +317,13 @@ class Runtime:
         next_due = time.monotonic()
         in_flight: deque[_Timing] = deque()
         while not self._stop.is_set():
+            # An exclusive Engine build has the GPU: let queued Generations finish, then wait for it, leaving
+            # Settings changes pending, since applying a Prompt would use the text encoder the build moved away.
+            if self._paused():
+                while in_flight:
+                    in_flight.popleft().wait_ms()
+                self._stop.wait(POLL)
+                continue
             # Wait for a free slot before taking a frame, so the frame taken is the freshest one.
             if len(in_flight) == IN_FLIGHT:
                 in_flight.popleft().wait_ms()

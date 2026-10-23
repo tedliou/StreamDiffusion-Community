@@ -110,6 +110,7 @@ export const text = {
     skipped: "Skipped",
     building: (percent: string) => `Building Engines ${percent}`,
     engineFailed: "Engines failed, using PyTorch",
+    paused: "Output paused while the Engines build with the GPU to themselves (Low-VRAM Mode)",
     applying: "Applying…",
   },
   previews: {

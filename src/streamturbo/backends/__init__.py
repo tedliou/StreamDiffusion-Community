@@ -61,6 +61,7 @@ class EngineStatus:
     state: EngineState  # off: not wanted yet, or the PyTorch Backend is forced
     progress: float = 0.0  # 0-1 while building
     detail: str | None = None  # what is building, or why the build failed
+    paused: bool = False  # no Generation runs: an exclusive build has the GPU to itself
 
 
 @runtime_checkable
@@ -77,16 +78,29 @@ class ProgressReport(Protocol):
 BuildFast = Callable[[ProgressReport], Backend]  # build(report) -> the fast Backend, or raise
 
 
+def low_vram_mode(forced: bool | None = None) -> bool:
+    """Low-VRAM Mode: as forced from the command line, otherwise on for a GPU below LOW_VRAM_GB (ADR-0001)."""
+    from streamturbo.doctor import LOW_VRAM_GB, nominal_gb
+
+    if forced is not None:
+        return forced
+    return nominal_gb(torch.cuda.mem_get_info()[1]) < LOW_VRAM_GB
+
+
 class BestBackend:
     """The best available Backend: the fallback until the fast one has been built in the background (ADR-0005).
 
     `choose()` is called by the generate thread between two Generations, so a Generation never mixes Backends.
     A failed build leaves the fallback in charge and says why in `engine_status()`.
+
+    An exclusive build (Low-VRAM Mode) needs the fallback's GPU memory: output pauses while it runs, and the
+    Runtime generates nothing until `engine_status().paused` clears.
     """
 
-    def __init__(self, fallback: Backend, build: BuildFast) -> None:
+    def __init__(self, fallback: Backend, build: BuildFast, exclusive: bool = False) -> None:
         self._fallback = fallback
         self._build = build
+        self._exclusive = exclusive
         self._active: Backend = fallback
         self._fast: Backend | None = None
         self._lock = threading.Lock()
@@ -106,7 +120,7 @@ class BestBackend:
             return
         with self._lock:
             if self._thread is None:
-                self._status = EngineStatus("building")
+                self._status = EngineStatus("building", paused=self._exclusive)
                 self._thread = threading.Thread(target=self._run_build, name="streamturbo-engines", daemon=True)
                 self._thread.start()
             fast = self._fast
@@ -131,7 +145,7 @@ class BestBackend:
 
     def _report(self, progress: float, detail: str | None = None) -> None:
         with self._lock:
-            self._status = EngineStatus("building", progress, detail)
+            self._status = EngineStatus("building", progress, detail, self._exclusive)
 
     def encode_prompt(self, prompt: str) -> torch.Tensor:
         return self._active.encode_prompt(prompt)

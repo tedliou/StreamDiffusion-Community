@@ -115,6 +115,10 @@ What executes the model: PyTorch or TensorRT.
 A TensorRT build of one model component for one GPU and one TensorRT version.
 _Avoid_: Plan, compiled model
 
+**Low-VRAM Mode**:
+How the Runtime runs on a GPU with less than 6 GB of VRAM, or when forced from the command line: Engines build with the GPU to themselves while output pauses. A property of the machine, never a Setting.
+_Avoid_: Low memory mode, lite mode
+
 ## Measurement
 
 **Generation Time**:

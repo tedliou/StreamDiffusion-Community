@@ -1,6 +1,9 @@
 """Seam 1: the Runtime on the best available Backend, with fake Engines building in the background."""
 
 import threading
+import time
+
+import torch
 
 from streamturbo.backends import BestBackend
 from streamturbo.runtime import Runtime
@@ -51,6 +54,58 @@ def test_a_failed_engine_build_keeps_output_on_the_fallback_and_says_why(small_s
 
     assert status.backend == "fake"
     assert "could not build the unet Engine" in (status.engines.detail or "")
+    assert close_to(sink.frames[-1], RED)
+
+
+def test_an_exclusive_build_pauses_output_and_resumes_it_on_the_engines(small_settings, net):
+    ready = threading.Event()
+    fallback = FakeBackend()
+
+    def build(progress):
+        progress(0.5)
+        ready.wait()
+        return FakeBackend(name="fast", negative=True)
+
+    source, sink = net.add_source("cam", repeat_fps=100), net.sink(small_settings.sink)
+    backend = BestBackend(fallback, build, exclusive=True)
+    with Runtime(small_settings.merged({"strength": 0.0}), backend, net) as runtime:
+        source.push(input_frame(solid(320, 240, RED)))
+        wait_until(lambda: runtime.status().engines.progress == 0.5)
+        status = runtime.status()
+        assert (status.backend, status.engines.state, status.engines.paused) == ("fake", "building", True)
+        calls = fallback.unet_calls
+        version = runtime.update(seed=7)  # applied once output resumes
+        time.sleep(0.3)
+        assert fallback.unet_calls == calls
+        assert not sink.frames
+
+        ready.set()
+        sink.wait_for(lambda f: f.settings_version == version)
+        status = runtime.status()
+
+    assert (status.backend, status.engines.state, status.engines.paused) == ("fast", "ready", False)
+    assert close_to(sink.frames[-1], NEGATIVE_RED)
+
+
+def test_an_exclusive_build_that_runs_out_of_memory_resumes_output_on_the_fallback(small_settings, net):
+    builds = []
+
+    def build(progress):
+        builds.append(1)
+        raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
+
+    source, sink = net.add_source("cam", repeat_fps=100), net.sink(small_settings.sink)
+    backend = BestBackend(FakeBackend(), build, exclusive=True)
+    with Runtime(small_settings.merged({"strength": 0.0}), backend, net) as runtime:
+        source.push(input_frame(solid(320, 240, RED)))
+        wait_until(lambda: runtime.status().engines.state == "failed")
+        sink.wait_for(lambda f: len(sink.frames) > 5)
+        status = runtime.status()
+
+    assert status.backend == "fake"
+    assert not status.engines.paused
+    assert "out of memory" in (status.engines.detail or "")
+    assert builds == [1]
     assert close_to(sink.frames[-1], RED)
 
 

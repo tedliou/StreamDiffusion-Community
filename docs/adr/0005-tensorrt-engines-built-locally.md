@@ -8,6 +8,8 @@ The FP16 UNet Engine also carries Temporal Coherence (#16): a `switch` input and
 
 The Upscaler (#21) is a fourth Engine component, FP16 with a dynamic profile over the same Generation Resolutions. Its cache key carries the Upscaler weights' SHA-256 instead of the sd-turbo revisions and has its own export version, so adding or changing it never rebuilds the UNet or VAE Engines. It builds in about 15 s. The Engine itself takes 10 ms per frame at 512x512 on an RTX 3070 at 162 W, below the static-shape spike's 16 ms. The spike ran on the default stream and the Engine runs on the Runtime's own.
 
+Keeping the PyTorch Backend generating during a build needs about 8 GB: its UNet and text encoder stay loaded while TensorRT holds its own copy of the weights and its workspace. In Low-VRAM Mode (#25) the build is exclusive instead: output pauses, and after each ONNX export the PyTorch UNet is released and the text encoder waits in host memory until that Engine is built. The Engines then load with the UNet still released, and output resumes on them. A failed build resumes output on the PyTorch Backend, as in the normal build. In both modes the workspace is the VRAM free just before each build, minus the ONNX weights and a 512 MiB reserve, capped at 2 GiB for FP16; with less than 256 MiB left the build fails with that reason instead of being attempted.
+
 An Engine only runs on the GPU and TensorRT version it was built for, so shipping Engines would break on most machines; building locally costs a few minutes once.
 
 ## Considered Options
