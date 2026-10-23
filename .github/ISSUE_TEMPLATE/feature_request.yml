@@ -1,0 +1,18 @@
+name: 功能建議
+description: 新功能或改善現有功能的想法
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解決的問題
+      description: 在什麼情境下、遇到什麼困難。
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 希望的做法
+      description: 希望 StreamTurbo 怎麼做；有考慮過的其他做法也可以寫。
+    validations:
+      required: true

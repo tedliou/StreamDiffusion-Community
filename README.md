@@ -1,18 +1,29 @@
 # StreamTurbo
 
-> **English summary.** StreamTurbo is a Windows-only, real-time image-to-image Runtime for TouchDesigner. It receives video over NDI or Spout, regenerates every frame with a single sd-turbo step on an NVIDIA GPU, and sends the result back over NDI or Spout. Clone the repository and double-click `start.cmd`. It is a non-commercial, independent rewrite of [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion) and is under construction: see the [spec](https://github.com/tedliou/StreamTurbo/issues/2) for the roadmap.
+[![CI](https://github.com/tedliou/StreamTurbo/actions/workflows/ci.yml/badge.svg)](https://github.com/tedliou/StreamTurbo/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/tedliou/StreamTurbo)](https://github.com/tedliou/StreamTurbo/releases/latest)
+[![License](https://img.shields.io/github/license/tedliou/StreamTurbo)](LICENSE)
+
+> **English summary.** StreamTurbo is a Windows-only, real-time image-to-image Runtime for TouchDesigner. It receives video over NDI or Spout, regenerates every frame with a single sd-turbo step on an NVIDIA GPU (TensorRT-accelerated, 4 GB of VRAM or more), and sends the result back over NDI or Spout. Settings change live from a Web Panel, OSC or the bundled TouchDesigner component. Clone the [latest release](https://github.com/tedliou/StreamTurbo/releases/latest) and double-click `start.cmd`. It is a non-commercial, independent rewrite of [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion). See the [changelog](CHANGELOG.md) for what each release contains.
 
 StreamTurbo 是給 TouchDesigner 使用的即時影像生成 Runtime，只支援 Windows。它從 NDI 或 Spout 接收影像，在 NVIDIA 顯示卡上用 sd-turbo 單步重新生成每一格，再經由 NDI 或 Spout 送回去。
 
-> [!NOTE]
-> 開發中。目前完成的是 M4：經 NDI 或 Spout 收送影像並即時生成（TensorRT 加速），用 Web Panel、OSC 或 TouchDesigner 範例元件即時調整 Settings，以 Preset 存取外觀，並有 Temporal Smoothing、Prompt Blend 與平滑的即時調整。後續進度請見 [spec #2](https://github.com/tedliou/StreamTurbo/issues/2)。
+主要功能：
+
+- TensorRT 加速，Engine 在第一次執行時於本機自動建置，建置期間先用 PyTorch 輸出
+- 用 Web Panel、OSC 或 TouchDesigner 範例元件即時調整 Settings，並以 Preset 存取外觀
+- Prompt Blend、Temporal Smoothing、Temporal Coherence，以及提示詞與 strength 的平滑漸變
+- Upscaler：以小型 AI 模型把生成畫面放大到輸出解析度
+- Low-VRAM Mode：4 GB 顯示卡（例如筆電的 RTX 3050 Laptop）也能使用 TensorRT
+
+各版本的變更見 [CHANGELOG.md](CHANGELOG.md)，下載與版本說明見 [Releases](https://github.com/tedliou/StreamTurbo/releases)。
 
 ## 需求
 
 | 項目 | 需求 |
 |---|---|
 | 作業系統 | Windows 10 / 11 x64 |
-| 顯示卡 | NVIDIA RTX 20 系列（Turing）以上，VRAM 8 GB 以上 |
+| 顯示卡 | NVIDIA RTX 20 系列（Turing）以上，VRAM 4 GB 以上；建議 8 GB 以上，4–6 GB 會自動進入 [Low-VRAM Mode](#low-vram-mode) |
 | 驅動程式 | 580 以上 |
 | 其他 | git |
 
@@ -20,11 +31,15 @@ StreamTurbo 是給 TouchDesigner 使用的即時影像生成 Runtime，只支援
 
 ## 安裝與啟動
 
+下載最新的正式版本（版本號見 [Releases](https://github.com/tedliou/StreamTurbo/releases/latest)）：
+
 ```bat
-git clone https://github.com/tedliou/StreamTurbo.git
+git clone --branch v1.0.0 https://github.com/tedliou/StreamTurbo.git
 cd StreamTurbo
 start.cmd
 ```
+
+不加 `--branch` 會拿到 `main` 上最新、尚未發布的版本。
 
 `start.cmd` 依序做這些事：
 
@@ -38,9 +53,21 @@ start.cmd
 
 所有下載都放在專案資料夾內（`cache\`、`models\`、`.venv\`），刪除資料夾即可完整移除。
 
+### 更新
+
+在專案資料夾裡切換到新版本的 tag，再執行 `start.cmd`，它會依新的 lockfile 同步套件：
+
+```bat
+git fetch --tags
+git checkout v1.0.0
+start.cmd
+```
+
+把 `v1.0.0` 換成要更新到的版本。自己存的 Preset（`presets\`）、上次的 Settings（`last-settings.toml`）、模型和 TensorRT Engine 都不在 git 裡，更新時會保留；需要的 Engine 若有變動，會自動只重建缺的部分。
+
 ## `streamturbo doctor`
 
-回報顯示卡名稱、算力、VRAM、驅動程式版本、目前與預設的功率上限、torch、CUDA 與 TensorRT 版本、TensorRT Engine 是否已建好，以及 NDI 和 Spout 是否可用。環境有問題時結束代碼為 1。
+回報顯示卡名稱、算力、VRAM、驅動程式版本、目前與預設的功率上限、torch、CUDA 與 TensorRT 版本、TensorRT Engine 是否已建好，以及 NDI 和 Spout 是否可用。VRAM 不足 4 GB 時回報為問題，4–6 GB 時提醒會進入 Low-VRAM Mode。環境有問題時結束代碼為 1。
 
 ```bat
 .venv\Scripts\streamturbo doctor
@@ -59,6 +86,18 @@ StreamTurbo 用 TensorRT 加速 UNet、tiny VAE 和 Upscaler。Engine 只能在�
 ```bat
 .venv\Scripts\streamturbo build-engines
 ```
+
+### Low-VRAM Mode
+
+VRAM 不足 6 GB 的顯示卡（例如 4 GB 的 RTX 3050 Laptop）會自動進入 Low-VRAM Mode，讓 TensorRT Engine 在小 VRAM 上也建得起來：
+
+- Engine 建置時獨占顯示卡：輸出暫停，PyTorch 先讓出 VRAM，建好後改用 TensorRT 恢復輸出。Web Panel 會顯示輸出暫停和建置進度。只有第一次（或需要重建時）會暫停；之後每次啟動載入已建好的 Engine，只停頓幾秒。
+- Engine 的解析度範圍是每邊 256–512。Generation Resolution 超過 512 時，在維持比例的前提下自動縮小（例如 Glass 的 1024×768 變成 512×384），再由 Upscaler 放大到 Output Resolution。Settings 和 Preset 裡的值不變，所以 8 GB 電腦上存的 Preset 可以直接用；Web Panel、狀態列和 OSC（`/streamturbo/status/generation_width` 等）會顯示實際使用的 Generation Resolution。
+- 建置失敗時繼續用 PyTorch 輸出，不會再自動重試。
+
+`streamturbo run` 和 `streamturbo build-engines` 都可以用 `--low-vram` 強制開啟（例如想把 VRAM 留給 TouchDesigner），或用 `--no-low-vram` 強制關閉。兩種模式的 Engine 分開快取，切換時不會刪掉另一種。
+
+參考值（RTX 3050 Laptop 4 GB，TensorRT，Glass 縮成 512×384，Upscaler 輸出 1024×768）：生成時間 p50 163 ms，約 5.8 fps；Upscaler 和 Temporal Coherence 都關掉時 p50 116 ms，約 8.2 fps。
 
 ## `streamturbo run`
 
@@ -79,6 +118,7 @@ StreamTurbo 用 TensorRT 加速 UNet、tiny VAE 和 Upscaler。Engine 只能在�
 | `--osc-port 7000` | 接收 OSC 的連接埠 |
 | `--osc-reply 127.0.0.1:7001` | OSC 回報 Settings 和狀態的目的地 |
 | `--no-browser` | 啟動時不開瀏覽器 |
+| `--low-vram`、`--no-low-vram` | 強制開啟或關閉 [Low-VRAM Mode](#low-vram-mode)；預設 VRAM 不足 6 GB 時自動開啟 |
 
 執行中每秒更新一行狀態：來源狀態（`waiting` 等待第一格、`live` 正常、`lost` 來源中斷）、每秒輸出格數、生成時間的 p50 和 p95，以及被較新影格取代而丟棄的格數。來源中斷時輸出停在最後一格，來源回來後自動恢復。
 
@@ -196,7 +236,7 @@ StreamTurbo 在 7000 埠接收 OSC，並把變更和狀態回報到 127.0.0.1:70
 | 收 | `/streamturbo/preset/recall`、`/streamturbo/preset/save` | Preset 名稱 |
 | 收 | `/streamturbo/sync` | 無；要求重送所有 Settings |
 | 送 | 與上面相同的 Setting 位址，Prompt Blend 依索引送（`prompts/0/text`、`prompts/0/weight`……） | 任何 Control Surface 改了 Settings 時送出 |
-| 送 | `/streamturbo/status/source_state`、`throughput_fps`、`generation_ms_p50`、`settings_version`、`error`、`frames_skipped`、`backend`、`engines/state`、`engines/progress` | 每 0.5 秒 |
+| 送 | `/streamturbo/status/source_state`、`throughput_fps`、`generation_ms_p50`、`settings_version`、`error`、`frames_skipped`、`backend`、`engines/state`、`engines/progress`、`engines/paused`、`generation_width`、`generation_height` | 每 0.5 秒；`generation_width` 和 `generation_height` 是實際使用的 Generation Resolution |
 | 送 | `/streamturbo/error` | 被拒絕的訊息與原因 |
 
 Web Panel 和 OSC 共用同一份 Settings，任一邊的變更另一邊都看得到。從 OSC 連續送 strength（例如 TouchDesigner 的 LFO）時，畫面會依 `strength_glide` 平滑地跟上，不會一格一格跳。
@@ -292,7 +332,12 @@ npm run build
 
 CI 會確認提交的建置結果與原始碼一致。介面設計規範見 [DESIGN.md](DESIGN.md)。
 
-設計文件：[GLOSSARY.md](GLOSSARY.md)、[docs/adr/](docs/adr/)。
+設計文件：[GLOSSARY.md](GLOSSARY.md)、[docs/adr/](docs/adr/)。開發流程與發布步驟見 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 回報問題
+
+- 錯誤回報與功能建議：開 [Issue](https://github.com/tedliou/StreamTurbo/issues/new/choose)，錯誤回報請附上 `streamturbo doctor` 的輸出。
+- 安全性問題：請勿公開開 Issue，依 [SECURITY.md](SECURITY.md) 私下回報。
 
 ## 授權
 

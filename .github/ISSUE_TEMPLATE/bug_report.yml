@@ -1,0 +1,44 @@
+name: 錯誤回報
+description: StreamTurbo 無法啟動、當機、畫面不對或效能異常
+labels: [bug, needs-triage]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 發生了什麼事
+      description: 實際看到的狀況，以及原本預期的結果。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重現步驟
+      description: 用了哪些 Settings、Preset、Transport（NDI 或 Spout），做了什麼操作。
+      placeholder: |
+        1. start.cmd --settings spout.toml
+        2. 在 Web Panel 把 strength 調到 0.9
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: "`.venv\Scripts\streamturbo --version` 的輸出，或目前的 git tag / commit。"
+      placeholder: streamturbo 1.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: streamturbo doctor 的輸出
+      description: "`.venv\Scripts\streamturbo doctor` 的完整輸出。"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 主控台訊息
+      description: 出錯前後 `start.cmd` 視窗裡的訊息，以及 Web Panel 顯示的錯誤。
+      render: text
